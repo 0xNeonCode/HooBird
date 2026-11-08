@@ -1,0 +1,15 @@
+.venv/
+runtime/
+synapse/homeserver.yaml
+__pycache__/
+.pytest_cache/
+*.pyc
+.dart_tool/
+app/.dart_tool/
+app/build/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+*.apk
+*.aab
+.idea/
+agent-tools/

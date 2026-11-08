@@ -1,0 +1,11 @@
+00:00 +0: loading /workspace/app/test/recovery_live_test.dart
+00:00 +0: Sicherungsschlüssel stellt Megolm wieder her, falscher Schlüssel und Passwort-Reset nicht
+[Matrix] [33mCurrent sync request ID has changed. Dropping this sync loop![0m
+Shell: [Matrix] [33mTried to update inbound group session indexes of a session which was not found in the database![0m
+[Matrix] [33mCurrent sync request ID has changed. Dropping this sync loop![0m
+Shell: [Matrix] [33mTried to update inbound group session indexes of a session which was not found in the database![0m
+[Matrix] [33mCurrent sync request ID has changed. Dropping this sync loop![0m
+Shell: [Matrix] [33mTried to update inbound group session indexes of a session which was not found in the database![0m
+[Matrix] [33mCurrent sync request ID has changed. Dropping this sync loop![0m
+00:02 +1: All tests passed!
+EXIT:0

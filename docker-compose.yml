@@ -1,0 +1,79 @@
+# Disposable local stack. Ports are bound to loopback only.
+# This is not the user's VServer and it is not a production deployment.
+name: hoobird-spike
+
+# Bridge networking on this VM drops container-to-container TCP.
+# Host networking keeps every listener on loopback instead.
+services:
+  postgres:
+    image: postgres:16-alpine
+    network_mode: host
+    command: ["postgres", "-c", "listen_addresses=127.0.0.1", "-p", "15432"]
+    env_file:
+      - ./runtime/localhost.env
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - ./synapse/initdb:/docker-entrypoint-initdb.d:ro
+      - hoobird-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 15432 -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  synapse:
+    image: matrixdotorg/synapse:v1.163.0
+    network_mode: host
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "/boot/boot.sh"]
+    environment:
+      PYTHONPATH: /opt/hoobird:/opt/hoobird_modules
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./runtime/synapse:/data
+      - ./synapse/homeserver.yaml:/data/homeserver.yaml:ro
+      - ./synapse/log.config:/data/log.config:ro
+      - ./synapse/boot.sh:/boot/boot.sh:ro
+      - ./policy/hoobird_rules.py:/opt/hoobird/hoobird_rules.py:ro
+      - ./policy/hoobird_policy_api:/opt/hoobird/hoobird_policy_api:ro
+      - ./synapse/modules:/opt/hoobird_modules:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:18008/health')\"",
+        ]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+
+  policy:
+    build: ./policy
+    network_mode: host
+    depends_on:
+      synapse:
+        condition: service_healthy
+    env_file:
+      - ./runtime/localhost.env
+    environment:
+      SYNAPSE_URL: http://127.0.0.1:18008
+      SERVER_NAME: hoobird.local
+      HOOBIRD_DEV_RETURN_EMAIL_TOKENS: "1"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:18018/_hoobird/health')\"",
+        ]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+      start_period: 10s
+
+volumes:
+  hoobird-postgres:

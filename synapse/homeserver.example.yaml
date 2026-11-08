@@ -1,0 +1,83 @@
+# Vorlage für den wegwerfbaren lokalen Homeserver.
+# scripts/render_local_config.py schreibt synapse/homeserver.yaml, und nur
+# wenn diese Datei noch fehlt. Die ausgefüllte Datei ist gitignored.
+# bcrypt_rounds ist absichtlich niedrig. Diese Vorlage nicht auf einen
+# erreichbaren Server kopieren.
+server_name: "hoobird.local"
+public_baseurl: "http://127.0.0.1:18008/"
+pid_file: /data/homeserver.pid
+web_client: false
+soft_file_limit: 0
+log_config: "/data/log.config"
+media_store_path: /data/media_store
+signing_key_path: "/data/hoobird.signing.key"
+registration_shared_secret: "__REGISTRATION_SHARED_SECRET__"
+macaroon_secret_key: "__MACAROON_SECRET_KEY__"
+form_secret: "__FORM_SECRET__"
+bcrypt_rounds: 4
+enable_registration: false
+enable_registration_without_verification: false
+allow_guest_access: false
+url_preview_enabled: false
+serve_server_wellknown: false
+report_stats: false
+enable_metrics: false
+allow_profile_lookup_over_federation: false
+allow_public_rooms_over_federation: false
+federation_domain_whitelist: []
+federation_whitelist_endpoint_enabled: true
+suppress_key_server_warning: true
+trusted_key_servers: []
+max_upload_size: "20M"
+
+listeners:
+  - port: 18008
+    tls: false
+    type: http
+    x_forwarded: false
+    bind_addresses: ["127.0.0.1"]
+    resources:
+      - names: [client]
+        compress: false
+
+database:
+  name: psycopg2
+  allow_unsafe_locale: true
+  args:
+    user: synapse
+    password: "__SYNAPSE_DB_PASSWORD__"
+    dbname: synapse
+    host: 127.0.0.1
+    port: 15432
+    cp_min: 1
+    cp_max: 5
+
+rc_message:
+  per_second: 50
+  burst_count: 300
+rc_registration:
+  per_second: 20
+  burst_count: 50
+rc_login:
+  address:
+    per_second: 20
+    burst_count: 100
+  account:
+    per_second: 20
+    burst_count: 100
+  failed_attempts:
+    per_second: 20
+    burst_count: 100
+rc_joins:
+  local:
+    per_second: 20
+    burst_count: 100
+  remote:
+    per_second: 0.1
+    burst_count: 1
+
+modules:
+  - module: hoobird_policy.HoobirdPolicyModule
+    config:
+      policy_dsn: "postgresql://hoobird_policy:__POLICY_DB_PASSWORD__@127.0.0.1:15432/hoobird_policy"
+      server_name: "hoobird.local"
