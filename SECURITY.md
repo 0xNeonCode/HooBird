@@ -1,22 +1,21 @@
 # Sicherheit
 
-Dies ist ein experimenteller Prototyp. Er ist nicht für echte Personen freigegeben, nicht auditiert und nicht Android-bereit. Ein bestandener Test ist keine Sicherheitsfreigabe.
+Dies ist ein experimenteller Prototyp. Er ist nicht für echte Personen freigegeben und nicht auditiert. Ein Debug-APK ist kein freigegebenes Android-Produkt. Ein bestandener Test ist keine Sicherheitsfreigabe.
 
 ## Bekannte Schwächen
 
 Diese Punkte sind am Prototyp gemessen oder im Code sichtbar. Sie bleiben absichtlich sichtbar.
 
 - Die Kinderrichtlinie muss der Server erzwingen. Ein generischer Matrix-Client umgeht die App und spricht Synapse direkt an. Die Tests prüfen diesen Weg. Die App ist nicht die Grenze.
-- Die Gerätefreigabe vergleicht eine `device_id`-Zeichenkette. Sie bindet keinen Schlüssel-Fingerabdruck. Wer das Passwort eines Kinderkontos und eine schon freigegebene Kennung kennt, kann diese Sitzung benutzen. `binds_key_fingerprint` ist falsch.
-- Synapse 1.163.0 bietet in diesem Modul keinen Callback für `/keys/upload`, `/keys/device_signing/upload` und `/keys/signatures/upload`. Der Widerruf löscht das Synapse-Gerät, dadurch stirbt das alte Token. Eine neue Anmeldung mit derselben freigegebenen Kennung ist wieder möglich.
-- Mitgliedschaft und Ereignis sind keine gemeinsame Transaktion. Ein Gruppen-Wettlauf aus Sperre und Einladung kann die Mitgliedschaft kurz falsch setzen. Inhalt danach soll fehlschlagen. Der Prototyp wirft das Kind nicht automatisch aus dem Raum.
-- Ein später freigegebenes Mitglied sieht die ältere Historie nicht. Ein späteres Mitglied ohne Freigabe wird abgelehnt. Die Gerätebindung bleibt die `device_id`, nicht ein Schlüssel.
+- Eine Kinder-Gerätefreigabe speichert die ed25519-Kennung, die das Gerät vor der Anmeldung anzeigt. Die Anmeldung verlangt eine Zeile mit dieser Kennung. Der Synapse-Prozess umwickelt `upload_keys_for_user` und weist Geräteschlüssel zurück, deren Signatur nicht zu dieser Kennung passt. Fehlt die Umwicklung, werden Kinderanmeldungen abgelehnt. Das ist keine Prüfung, dass das Gerät physisch das der Eltern ist. Wer das Passwort und die private Hälfte genau dieses Schlüssels hat, kann die Sitzung benutzen. `binds_key_fingerprint` ist für gespeicherte Zeilen wahr. Cross-Signing und `/keys/signatures/upload` haben weiter keinen eigenen HooBird-Callback.
+- Mitgliedschaft und Sperre sind keine gemeinsame Transaktion mit Synapse. Nach einer Sperre versucht der Dienst, den gesperrten Kontakt aus den Räumen zu entfernen, denen das Kind schon beigetreten ist, und wiederholt das. Einladung und Sperre können sich trotzdem kurz überholen. Inhalt wird abgelehnt, sobald die Sperre sichtbar ist. Der Dienst entfernt das Kind nicht aus dem Raum.
+- Ein später freigegebenes Mitglied sieht die ältere Historie nicht. Ein späteres Mitglied ohne Freigabe wird abgelehnt.
 - Die Medienprüfung liest den Anfang der Datei. Zufällige Bytes können durchgehen. Ein verschlüsselter Upload versteckt Metadaten vor dem Server. EXIF wird nur vor der Verschlüsselung auf der Client-Seite entfernt.
 - `m.room.encrypted` wird auf die Megolm-Form geprüft, nicht darauf, dass eine Implementierung den Ciphertext korrekt erzeugt hat.
 - `check_event_allowed` ist in Synapse experimentell und wird trotzdem benutzt. Fehlt der Raumzustand, lässt das Modul Mitgliedschaftsereignisse zu und schreibt ein Protokoll.
 - `user_may_join_room` gilt nicht für den Admin-Join und nicht für das Anlegen des Raums. `check_login_for_spam` läuft beim Login, nicht bei der Registrierung.
 - Das Android-Manifest erlaubt für den lokalen Prototyp Klartext-HTTP. `bcrypt_rounds` ist 4.
-- Es gibt kein physisches Android, kein APK und kein externes Audit.
+- Das Debug-APK dieses Meilensteins ist testsigniert und nicht für eine Veröffentlichung. In dieser Umgebung lief kein Emulator und kein physisches Gerät. Es gibt kein externes Audit.
 
 ## Meldung
 

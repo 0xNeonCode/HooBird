@@ -15,6 +15,7 @@ from hoobird_rules import (
     membership_allowed,
     state_event_allowed,
     valid_device_id,
+    valid_ed25519,
     valid_username,
 )
 
@@ -175,6 +176,9 @@ def test_username_device_and_parent_limit():
     assert valid_username("a" * 33) is False
     assert valid_device_id("LINUSPHONE1") is True
     assert valid_device_id("../x") is False
+    assert valid_ed25519("A" * 43) is True
+    assert valid_ed25519("A" * 10) is False
+    assert valid_ed25519("not a key") is False
     assert can_add_parent(0) is True
     assert can_add_parent(1) is True
     assert can_add_parent(2) is False

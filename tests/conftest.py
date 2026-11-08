@@ -11,6 +11,7 @@ from urllib.parse import quote
 import httpx
 import pytest
 
+from tests.device_keys import random_ed25519
 from tools.local_env import load_local_env
 
 load_local_env()
@@ -45,6 +46,7 @@ class Stack:
         device_id: str | None = None,
         email: str | None = None,
         password: str | None = None,
+        ed25519: str | None = None,
     ) -> dict:
         username = f"{role[:1]}{uuid.uuid4().hex[:10]}"
         body: dict = {
@@ -54,6 +56,8 @@ class Stack:
         }
         if device_id:
             body["device_id"] = device_id
+            if role == "child":
+                body["ed25519"] = ed25519 or random_ed25519()
         if email:
             body["email"] = email
         response = self.client.post(
@@ -64,6 +68,8 @@ class Stack:
         assert response.status_code == 200, response.text
         payload = response.json()
         payload["password"] = body["password"]
+        if body.get("ed25519"):
+            payload["ed25519"] = body["ed25519"]
         return payload
 
     def mx(self, method: str, path: str, token: str | None = None, json_body: dict | None = None, content: bytes | None = None, content_type: str | None = None):

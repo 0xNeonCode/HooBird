@@ -684,3 +684,7 @@ Copyright 2020 The Matrix.org Foundation C.I.C.
 - `matrix` 16.0.1 hat in `pubspec.yaml` die Zeilen `SPDX-FileCopyrightText: 2019-Present Famedly GmbH` und `SPDX-License-Identifier: AGPL-3.0-or-later`.
 - Die kommerzielle Element-Lizenz ist keine Option dieses Entwurfs.
 - UNKNOWN bleibt UNKNOWN. Dazu kann eine Crate gehören, deren Archiv nicht geladen oder deren Prüfsumme nicht bestätigt wurde.
+
+## Nachtrag image_picker
+
+`scripts/license_inventory.py` wurde für diesen Nachtrag nicht erneut ausgeführt. Die Tabelle oben enthält `image_picker` deshalb nicht. `app/pubspec.lock` hält `image_picker` 1.2.4 fest. Die gelesene Datei `LICENSE` in diesem Paket beginnt mit „Copyright 2013 The Flutter Authors“ und ist eine BSD-3-Clause-Lizenz. Dieselbe Datei hängt weitere Hinweise an, darunter aFileChooser. Die transitiven Pakete, die `flutter pub get` dafür geholt hat, stehen im Lockfile. Ihre Lizenztexte sind in dieser Tabelle nicht neu abgeschrieben.

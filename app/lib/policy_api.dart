@@ -109,12 +109,13 @@ class PolicyApi {
     String token,
     String childId,
     String deviceId,
+    String ed25519,
   ) {
     return _send(
       'POST',
       '/_hoobird/v1/children/$childId/devices',
       token: token,
-      body: {'device_id': deviceId},
+      body: {'device_id': deviceId, 'ed25519': ed25519},
     );
   }
 

@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026. Legal name of the copyright holder is not recorded in this repository.
 
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:matrix/matrix.dart';
 
+import '../media_prep.dart';
 import '../security_label.dart';
 import 'shell.dart';
 
@@ -42,6 +47,32 @@ class _ConversationPageState extends State<ConversationPage> {
     _timeline?.cancelSubscriptions();
     _input.dispose();
     super.dispose();
+  }
+
+  Future<void> _sendImage() async {
+    if (_sending) return;
+    setState(() {
+      _sending = true;
+      _error = null;
+    });
+    try {
+      final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
+      if (picked == null) return;
+      final raw = await File(picked.path).readAsBytes();
+      final stripped = stripJpegMetadata(Uint8List.fromList(raw));
+      final caption = _input.text.trim();
+      await widget.room.sendFileEvent(
+        MatrixImageFile(bytes: stripped, name: 'bild.jpg', mimeType: 'image/jpeg'),
+        extraContent: caption.isEmpty ? null : {'body': caption},
+      );
+      _input.clear();
+    } on JpegPrepException catch (exc) {
+      _error = exc.message;
+    } catch (exc) {
+      _error = 'Bild abgelehnt: $exc';
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
   }
 
   Future<void> _send() async {
@@ -131,6 +162,11 @@ class _ConversationPageState extends State<ConversationPage> {
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
             child: Row(
               children: [
+                IconButton(
+                  tooltip: 'Bild senden. GPS wird vor dem Senden entfernt. Text im Feld wird zur Beschriftung.',
+                  onPressed: _sending ? null : _sendImage,
+                  icon: const Icon(Icons.image_outlined),
+                ),
                 Expanded(
                   child: TextField(
                     controller: _input,

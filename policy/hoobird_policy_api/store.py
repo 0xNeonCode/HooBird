@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS device_authorizations (
     child_user_id TEXT NOT NULL REFERENCES accounts(user_id),
     device_id TEXT NOT NULL,
     authorized_by TEXT NOT NULL REFERENCES accounts(user_id),
+    ed25519 TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (child_user_id, device_id)
 );
@@ -93,6 +94,9 @@ class PolicyStore:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(SCHEMA)
+                cur.execute(
+                    "ALTER TABLE device_authorizations ADD COLUMN IF NOT EXISTS ed25519 TEXT"
+                )
 
     def get_account(self, user_id: str) -> dict | None:
         with self._connect() as conn:
@@ -448,17 +452,50 @@ class PolicyStore:
                     for row in cur.fetchall()
                 ]
 
-    def authorize_device(self, child_user_id: str, device_id: str, authorized_by: str) -> None:
+    def authorize_device(
+        self, child_user_id: str, device_id: str, authorized_by: str, ed25519: str
+    ) -> str:
+        """Store a parent-approved ed25519 key. Does not replace a different key."""
+
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO device_authorizations (child_user_id, device_id, authorized_by)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT DO NOTHING
+                    INSERT INTO device_authorizations
+                        (child_user_id, device_id, authorized_by, ed25519)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (child_user_id, device_id) DO NOTHING
                     """,
-                    (child_user_id, device_id, authorized_by),
+                    (child_user_id, device_id, authorized_by, ed25519),
                 )
+                if cur.rowcount:
+                    return "created"
+                cur.execute(
+                    """
+                    SELECT ed25519 FROM device_authorizations
+                    WHERE child_user_id = %s AND device_id = %s
+                    """,
+                    (child_user_id, device_id),
+                )
+                row = cur.fetchone()
+        if row and row[0] == ed25519:
+            return "same"
+        if row and not row[0]:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE device_authorizations
+                        SET ed25519 = %s
+                        WHERE child_user_id = %s AND device_id = %s
+                          AND (ed25519 IS NULL OR ed25519 = '')
+                        """,
+                        (ed25519, child_user_id, device_id),
+                    )
+                    if cur.rowcount:
+                        return "created"
+            return "conflict"
+        return "conflict"
 
     def revoke_device(self, child_user_id: str, device_id: str) -> bool:
         with self._connect() as conn:
@@ -479,23 +516,44 @@ class PolicyStore:
                     """
                     SELECT 1 FROM device_authorizations
                     WHERE child_user_id = %s AND device_id = %s
+                      AND ed25519 IS NOT NULL AND ed25519 <> ''
                     """,
                     (child_user_id, device_id),
                 )
                 return cur.fetchone() is not None
+
+    def device_ed25519(self, child_user_id: str, device_id: str) -> str | None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT ed25519 FROM device_authorizations
+                    WHERE child_user_id = %s AND device_id = %s
+                    """,
+                    (child_user_id, device_id),
+                )
+                row = cur.fetchone()
+        if not row or not row[0]:
+            return None
+        return row[0]
 
     def list_devices(self, child_user_id: str) -> list[dict]:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT device_id, authorized_by FROM device_authorizations
+                    SELECT device_id, authorized_by, ed25519 FROM device_authorizations
                     WHERE child_user_id = %s ORDER BY device_id
                     """,
                     (child_user_id,),
                 )
                 return [
-                    {"device_id": row[0], "authorized_by": row[1]}
+                    {
+                        "device_id": row[0],
+                        "authorized_by": row[1],
+                        "ed25519": row[2],
+                        "binds_key_fingerprint": bool(row[2]),
+                    }
                     for row in cur.fetchall()
                 ]
 

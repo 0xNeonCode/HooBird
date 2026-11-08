@@ -3,9 +3,11 @@
 """Synapse module: enforce HooBird child policy inside the homeserver.
 
 Generic clients hit these hooks even when they skip the HooBird app.
-There is no module callback for /keys/upload or /keys/device_signing/upload.
-Those routes still require an access token, and a child token is only issued
-by login, which this module can reject. Revocation deletes the Synapse device.
+Synapse 1.163 has no module callback for /keys/upload. This module therefore
+wraps E2eKeysHandler.upload_keys_for_user inside the homeserver process.
+A child can publish device keys only when they are signed by the ed25519 key
+a parent already stored. If that wrap cannot be installed, child logins are
+refused. Revocation still deletes the Synapse device.
 
 Policy reads are fail-closed: a database error rejects the operation.
 """
@@ -16,9 +18,15 @@ import logging
 from collections.abc import Mapping
 
 from synapse.api.errors import NotFoundError, SynapseError
+from synapse.http.servlet import parse_json_object_from_request
 from synapse.module_api import NOT_SPAM, errors
+from synapse.rest.admin._base import assert_user_is_admin
+from twisted.internet import defer
+from twisted.web.resource import Resource
+from twisted.web.server import NOT_DONE_YET
 
 from hoobird_policy_api.store import PolicyStore
+from device_key_check import child_key_upload_decision
 from hoobird_rules import (
     apply_member_event,
     content_event_allowed,
@@ -67,7 +75,9 @@ class HoobirdPolicyModule:
             check_event_allowed=self.check_event_allowed,
             on_create_room=self.on_create_room,
         )
-        logger.info("hoobird policy module registered")
+        self.key_guard = self._install_key_guard()
+        api.register_web_resource("/_hoobird/internal/reconcile", _ReconcileResource(self))
+        logger.info("hoobird policy module registered key_guard=%s", self.key_guard)
 
     @staticmethod
     def parse_config(config: dict) -> dict:
@@ -151,6 +161,9 @@ class HoobirdPolicyModule:
         try:
             if self.store.role_of(user_id) != "child":
                 return NOT_SPAM
+            if not self.key_guard:
+                logger.error("child login denied because the key upload guard is missing")
+                return errors.Codes.FORBIDDEN
             if not device_id or not self.store.device_authorized(user_id, device_id):
                 logger.info("child device login denied")
                 return errors.Codes.FORBIDDEN
@@ -264,6 +277,141 @@ class HoobirdPolicyModule:
             if isinstance(membership, str):
                 members[state_key] = membership
         return members
+
+
+    def _install_key_guard(self) -> bool:
+        homeserver = getattr(self.api, "_hs", None)
+        if homeserver is None:
+            logger.error("synapse homeserver handle missing")
+            return False
+        try:
+            handler = homeserver.get_e2e_keys_handler()
+        except Exception:
+            logger.exception("e2e key handler missing")
+            return False
+        original = handler.upload_keys_for_user
+
+        async def guarded(user_id: str, device_id: str, keys: dict):
+            decision = await self._child_upload_decision(handler, user_id, device_id, keys)
+            if decision != "allow":
+                logger.info("child key upload rejected: %s", decision)
+                raise SynapseError(403, decision, errors.Codes.FORBIDDEN)
+            return await original(user_id, device_id, keys)
+
+        handler.upload_keys_for_user = guarded
+        return True
+
+    async def _child_upload_decision(self, handler, user_id: str, device_id: str, keys: dict) -> str:
+        try:
+            if self.store.role_of(user_id) != "child":
+                return "allow"
+            approved = self.store.device_ed25519(user_id, device_id)
+            body = keys if isinstance(keys, dict) else {}
+            present = body["device_keys"] if "device_keys" in body else None
+            published = None
+            if present is None:
+                published = await _published_ed25519(handler, user_id, device_id)
+            uploads_material = bool(body.get("one_time_keys") or body.get("fallback_keys"))
+            return child_key_upload_decision(
+                approved_ed25519=approved,
+                device_keys=present,
+                user_id=user_id,
+                device_id=device_id,
+                published_ed25519=published,
+                uploads_material=uploads_material,
+            )
+        except Exception:
+            logger.exception("child key decision failed")
+            return "policy_store_unavailable"
+
+
+    async def reconcile_blocked_contact(
+        self, child_user_id: str, contact_user_id: str, room_ids: list[str]
+    ) -> list[str]:
+        """Kick a blocked contact out of rooms the child already joined.
+
+        The child is the sender, so this only works where that child can kick.
+        A room where the child has no power stays as it is. Content checks
+        still reject the pair. This is not one transaction with the block.
+        """
+
+        kicked: list[str] = []
+        for room_id in room_ids:
+            if not isinstance(room_id, str) or not room_id.startswith("!"):
+                continue
+            try:
+                await self.api.update_room_membership(
+                    child_user_id,
+                    contact_user_id,
+                    room_id,
+                    "kick",
+                    content={"reason": "HooBird block"},
+                )
+                kicked.append(room_id)
+            except Exception:
+                logger.info("reconcile did not remove membership", exc_info=True)
+        return kicked
+
+
+class _ReconcileResource(Resource):
+    isLeaf = True
+
+    def __init__(self, module: HoobirdPolicyModule):
+        super().__init__()
+        self.module = module
+
+    def render_POST(self, request):
+        deferred = defer.ensureDeferred(self._run(request))
+
+        def finish(body: bytes) -> None:
+            request.setResponseCode(200)
+            request.setHeader(b"content-type", b"application/json")
+            request.write(body)
+            request.finish()
+
+        def fail(failure) -> None:
+            logger.info("reconcile request rejected: %s", failure.getErrorMessage())
+            request.setResponseCode(403)
+            request.setHeader(b"content-type", b"application/json")
+            request.write(b'{"errcode":"M_FORBIDDEN","error":"reconcile_rejected"}')
+            if not request.finished:
+                request.finish()
+
+        deferred.addCallbacks(finish, fail)
+        return NOT_DONE_YET
+
+    async def _run(self, request) -> bytes:
+        auth = self.module.api._hs.get_auth()
+        requester = await auth.get_user_by_req(request)
+        await assert_user_is_admin(auth, requester)
+        body = parse_json_object_from_request(request)
+        child_user_id = body.get("child_user_id")
+        contact_user_id = body.get("contact_user_id")
+        room_ids = body.get("room_ids")
+        if (
+            not isinstance(child_user_id, str)
+            or not isinstance(contact_user_id, str)
+            or not isinstance(room_ids, list)
+        ):
+            raise SynapseError(400, "bad_reconcile")
+        if self.module.store.role_of(child_user_id) != "child":
+            raise SynapseError(403, "not_a_child")
+        if not self.module.store.blocks_for(child_user_id, contact_user_id):
+            raise SynapseError(403, "block_missing")
+        kicked = await self.module.reconcile_blocked_contact(
+            child_user_id, contact_user_id, room_ids
+        )
+        import json
+
+        return json.dumps({"kicked_rooms": kicked}).encode()
+
+
+async def _published_ed25519(handler, user_id: str, device_id: str) -> str | None:
+    found = await handler.store.get_e2e_device_keys_for_cs_api([(user_id, device_id)])
+    device = ((found or {}).get(user_id) or {}).get(device_id) or {}
+    keys = device.get("keys") or {}
+    value = keys.get(f"ed25519:{device_id}")
+    return value if isinstance(value, str) else None
 
 
 def _as_dict(value) -> dict:

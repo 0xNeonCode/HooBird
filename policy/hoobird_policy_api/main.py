@@ -26,6 +26,7 @@ from hoobird_rules import (
     contact_allowed,
     fold_username,
     valid_device_id,
+    valid_ed25519,
     valid_username,
 )
 
@@ -47,6 +48,7 @@ class CreateAccountBody(BaseModel):
     role: str
     email: str | None = None
     device_id: str | None = None
+    ed25519: str | None = None
 
 
 class UsernameBody(BaseModel):
@@ -79,6 +81,7 @@ class ContactBody(BaseModel):
 
 class DeviceBody(BaseModel):
     device_id: str
+    ed25519: str
 
 
 def _settings() -> dict:
@@ -257,6 +260,12 @@ def create_account(body: CreateAccountBody, request: Request):
             _fail(400, "bad_email", "Die E-Mail-Adresse ist ungültig.")
     if body.device_id and not valid_device_id(body.device_id):
         _fail(400, "bad_device", "Die Gerätekennung ist ungültig.")
+    if body.role == "child" and body.device_id and not valid_ed25519(body.ed25519 or ""):
+        _fail(
+            400,
+            "fingerprint_required",
+            "Ein Kindergerät braucht die ed25519-Kennung, die das Gerät anzeigt.",
+        )
     localpart = None
     user_id = None
     for _ in range(3):
@@ -285,7 +294,7 @@ def create_account(body: CreateAccountBody, request: Request):
     if body.role == "child":
         store.link_parent(user_id, actor["user_id"])
         if body.device_id:
-            store.authorize_device(user_id, body.device_id, actor["user_id"])
+            store.authorize_device(user_id, body.device_id, actor["user_id"], body.ed25519 or "")
     dev_token = None
     if email:
         import secrets
@@ -512,11 +521,23 @@ def block_contact(child_id: str, body: ContactBody, request: Request):
     if store.is_linked_parent(child_id, contact["user_id"]):
         _fail(400, "cannot_block_parent", "Ein verknüpftes Elternkonto kann hier nicht blockiert werden.")
     store.add_block(child_id, contact["user_id"], actor["user_id"])
+    repair = admin_of(request).reconcile_block(child_id, contact["user_id"])
     return {
         "blocked_by": sorted(store.blocks_for(child_id, contact["user_id"])),
         "effective": False,
         "reapproval_does_not_lift": True,
+        "reconcile": repair,
     }
+
+
+@app.post("/_hoobird/v1/children/{child_id}/blocks/{contact_user_id}/reconcile")
+def reconcile_block(child_id: str, contact_user_id: str, request: Request):
+    actor = caller(request)
+    store = store_of(request)
+    _require_linked_parent(store, actor, child_id)
+    if not store.blocks_for(child_id, contact_user_id):
+        _fail(404, "block_missing", "Keine Sperre für diesen Kontakt.")
+    return admin_of(request).reconcile_block(child_id, contact_user_id)
 
 
 @app.delete("/_hoobird/v1/children/{child_id}/blocks/{contact_user_id}")
@@ -544,12 +565,21 @@ def authorize_device(child_id: str, body: DeviceBody, request: Request):
     _require_linked_parent(store, actor, child_id)
     if not valid_device_id(body.device_id):
         _fail(400, "bad_device", "Die Gerätekennung ist ungültig.")
-    store.authorize_device(child_id, body.device_id, actor["user_id"])
+    if not valid_ed25519(body.ed25519):
+        _fail(400, "fingerprint_required", "Die ed25519-Kennung des Geräts fehlt oder ist ungültig.")
+    outcome = store.authorize_device(child_id, body.device_id, actor["user_id"], body.ed25519)
+    if outcome == "conflict":
+        _fail(
+            409,
+            "fingerprint_conflict",
+            "Für diese Gerätekennung ist schon ein anderer Schlüssel gespeichert. Ein anderes Elternteil ersetzt ihn nicht.",
+        )
     return {
         "device_id": body.device_id,
         "authorized": True,
-        "binds_key_fingerprint": False,
+        "binds_key_fingerprint": True,
         "one_parent_sufficient": True,
+        "stored": outcome,
     }
 
 

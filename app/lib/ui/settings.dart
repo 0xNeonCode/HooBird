@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../policy_api.dart';
 import '../session.dart';
+import 'legal.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key, required this.controller});
@@ -100,7 +101,7 @@ class _SettingsPageState extends State<SettingsPage> {
         if (role == 'child') ...[
           const SizedBox(height: 20),
           const Text(
-            'Dieses Kinderkonto spricht nur mit freigegebenen Kontakten. Jedes weitere Gerät braucht eine Freigabe. Die Kennung bindet nicht den Geräteschlüssel.',
+            'Dieses Kinderkonto spricht nur mit freigegebenen Kontakten. Ein weiteres Gerät muss mit seiner ed25519-Kennung freigegeben werden. Die Gerätekennung allein reicht nicht. Ein Passwort-Zurücksetzen stellt die Chat-Schlüssel nicht wieder her.',
           ),
         ],
         if (_notice != null || controller.error != null) ...[
@@ -108,6 +109,15 @@ class _SettingsPageState extends State<SettingsPage> {
           Text(_notice ?? controller.error!),
         ],
         const SizedBox(height: 16),
+        OutlinedButton(
+          onPressed: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const LegalPage()),
+            );
+          },
+          child: const Text('Quelltext und Lizenzen'),
+        ),
+        const SizedBox(height: 8),
         OutlinedButton(
           onPressed: controller.busy ? null : controller.logout,
           child: const Text('Abmelden'),
@@ -129,6 +139,7 @@ class ParentPanel extends StatefulWidget {
 class _ParentPanelState extends State<ParentPanel> {
   final _username = TextEditingController();
   final _device = TextEditingController();
+  final _ed25519 = TextEditingController();
   String? _selectedChild;
   Map<String, dynamic>? _policy;
   String? _notice;
@@ -137,6 +148,7 @@ class _ParentPanelState extends State<ParentPanel> {
   void dispose() {
     _username.dispose();
     _device.dispose();
+    _ed25519.dispose();
     super.dispose();
   }
 
@@ -257,12 +269,25 @@ class _ParentPanelState extends State<ParentPanel> {
             decoration: const InputDecoration(labelText: 'Gerätekennung freigeben'),
           ),
           const SizedBox(height: 8),
+          TextField(
+            controller: _ed25519,
+            decoration: const InputDecoration(
+              labelText: 'ed25519 des Kindergeräts',
+              helperText: 'Die Zeile, die das Kindergerät vor der Anmeldung anzeigt. Ein anderes Elternteil ersetzt eine schon gespeicherte Kennung nicht.',
+            ),
+          ),
+          const SizedBox(height: 8),
           Wrap(
             spacing: 8,
             children: [
               FilledButton(
                 onPressed: () => _act((token, childId) async {
-                  await widget.controller.api.authorizeDevice(token, childId, _device.text.trim());
+                  await widget.controller.api.authorizeDevice(
+                    token,
+                    childId,
+                    _device.text.trim(),
+                    _ed25519.text.trim(),
+                  );
                 }),
                 child: const Text('Gerät erlauben'),
               ),

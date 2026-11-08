@@ -40,19 +40,19 @@ Diese Punkte sind keine bestätigte Produktentscheidung. Sie sind die enge Ausle
 - Es gibt keine Selbstbedienung, mit der ein verlorenes Elternkonto wiederhergestellt wird.
 - Ein Passwort-Reset ist nur für ein Kinderkonto durch ein verknüpftes Elternteil möglich. Er meldet Geräte ab, behält die Gerätefreigaben, ändert die Matrix-ID nicht und gibt weder den Sicherungsschlüssel noch Cross-Signing-Schlüssel zurück.
 - Das erste Kindergerät ist nicht implizit erlaubt. Es muss bei der Anlage oder danach freigegeben werden.
-- Die Gerätefreigabe bindet die Zeichenkette der Gerätekennung, nicht den kryptografischen Fingerabdruck. Wer das Passwort kennt und eine bereits freigegebene Kennung mitbringt, kann diese Sitzung übernehmen.
+- Die Gerätefreigabe eines Kinderkontos speichert die ed25519-Kennung, die das Gerät vor der Anmeldung anzeigt. Eine andere Kennung für dieselbe Geräte-ID wird nicht still ersetzt. Die Anmeldung verlangt diese Zeile. Der Homeserver weist einen Schlüssel-Upload zurück, dessen Signatur nicht dazu passt. Wer das Passwort und die private Hälfte genau dieses Schlüssels hat, kann die Sitzung benutzen. Das beweist nicht, dass das physische Gerät das der Eltern ist.
 - Räume werden serverseitig auf nur eingeladene Mitglieder, Historie „joined“, kein Gastzugang, kein Föderieren und Megolm festgelegt.
 - Klartext-Ereignisse der Typen `m.room.message`, `m.reaction`, `m.sticker` und Umfragen werden abgelehnt. `m.room.encrypted` muss die Megolm-Struktur tragen. Das prüft die Form, nicht die kryptografische Gültigkeit.
 - Ein Medien-Upload, dessen erste Bytes wie JPEG, PNG, GIF, Ogg, ID3, PDF, RIFF, WebM oder MP4 aussehen, wird abgelehnt. Das ist eine Heuristik und kein Beweis, dass der Rest verschlüsselt ist.
 - Wenn die Richtliniendatenbank nicht erreichbar ist, wird abgelehnt.
-- Richtlinie und Synapse sind keine gemeinsame Transaktion. Eine gleichzeitige Sperre und Einladung kann die Mitgliedschaft noch zulassen. Der folgende Inhaltsversuch muss dann scheitern. Es gibt keinen automatischen Rauswurf. Das ist ein Vorschlag für das Verhalten, keine bestätigte Oberfläche.
+- Richtlinie und Synapse sind keine gemeinsame Transaktion. Nach einer Sperre versucht der Dienst, den gesperrten Kontakt aus Räumen zu entfernen, denen das Kind schon beigetreten ist, und wiederholt das. Eine gleichzeitige Einladung kann das Fenster trotzdem gewinnen. Der folgende Inhaltsversuch muss scheitern. Das Kind wird nicht entfernt.
 - Die Verknüpfung in Person ist ein einmaliger Code mit kurzer Gültigkeit, kein QR-Code.
 - Der Bootstrap-Admin ist ein Betreiberkonto. Er kann Eltern- und Erwachsenenkonten anlegen, aber kein Kinderkonto, und er hat keine Schnittstelle zum Entschlüsseln.
 
 ## Offen
 
 - Wer ein verlorenes Elternkonto wiederherstellt, und ob ein Elternteil sich einseitig lösen darf.
-- Ob eine Gerätefreigabe später an einen Schlüsselfingerabdruck gebunden wird.
+- Ob Cross-Signing und `/keys/signatures/upload` eine eigene Prüfung bekommen. Der Geräte-Upload ist gebunden. Eine Ersetzung des Master-Schlüssels prüft Synapse selbst.
 - Die Oberfläche, wenn eine Kindergruppe später eine nicht freigegebene Person bekommen würde. Der Prototyp lehnt die neue Mitgliedschaft und neuen Inhalt ab und entfernt das Kind nicht von selbst.
 - Ob die Verknüpfung als QR, als Code oder als beides erscheint.
 - Push ohne Klartext.

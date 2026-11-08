@@ -12,7 +12,9 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:vodozemac/vodozemac.dart' as olm;
 
+import 'pickle_key.dart';
 import 'policy_api.dart';
 
 const defaultPolicyUrl = 'http://127.0.0.1:18018';
@@ -57,6 +59,9 @@ class HoobirdController extends ChangeNotifier {
   String? error;
   Map<String, dynamic>? me;
   String? recoveryKeyShownOnce;
+  String? deviceEd25519;
+  String fingerprintStatus = 'Fingerabdruck wird vorbereitet.';
+  Future<olm.Account?>? _accountFuture;
 
   bool get loggedIn => client?.isLogged() ?? false;
 
@@ -90,13 +95,30 @@ class HoobirdController extends ChangeNotifier {
         await matrix.checkHomeserver(server);
       }
       if (!matrix.isLogged()) {
+        final account = await localAccount();
+        if (account == null) {
+          throw PolicyException(
+            0,
+            'fingerprint_unavailable',
+            'Der Geräteschlüssel ist nicht bereit. Die Anmeldung wurde abgebrochen, damit kein anderer Schlüssel hochgeladen wird.',
+          );
+        }
         await matrix.init(
           newToken: token,
           newUserID: userId,
           newDeviceID: returnedDevice,
           newDeviceName: 'HooBird',
           newHomeserver: server,
+          newOlmAccount: account.toPickleEncrypted(pickleKeyOf(userId)),
         );
+        final uploaded = await matrix.encryption?.olmManager.uploadKeys(uploadDeviceKeys: true);
+        if (uploaded != true) {
+          throw PolicyException(
+            0,
+            'device_keys_rejected',
+            'Die Geräteschlüssel wurden nicht angenommen. Die Anmeldung bleibt ohne diese Schlüssel.',
+          );
+        }
       }
       deviceId = returnedDevice;
       me = await api.me(token);
@@ -171,6 +193,47 @@ class HoobirdController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> prepareFingerprint() async {
+    await localAccount();
+    notifyListeners();
+  }
+
+  Future<olm.Account?> localAccount() {
+    return _accountFuture ??= _loadAccount();
+  }
+
+  Future<olm.Account?> _loadAccount() async {
+    try {
+      await initVodozemac();
+      var secret = prefs.getString('pending_olm_secret');
+      if (secret == null || secret.length < 16) {
+        final random = Random.secure();
+        secret = List.generate(32, (_) => String.fromCharCode(33 + random.nextInt(90))).join();
+        await prefs.setString('pending_olm_secret', secret);
+      }
+      final stored = prefs.getString('pending_olm_pickle');
+      final account = stored == null
+          ? olm.Account()
+          : olm.Account.fromPickleEncrypted(
+              pickle: stored,
+              pickleKey: pickleKeyOf(secret),
+            );
+      if (stored == null) {
+        await prefs.setString(
+          'pending_olm_pickle',
+          account.toPickleEncrypted(pickleKeyOf(secret)),
+        );
+      }
+      deviceEd25519 = account.identityKeys.ed25519.toBase64();
+      fingerprintStatus = deviceEd25519!;
+      return account;
+    } catch (_) {
+      deviceEd25519 = null;
+      fingerprintStatus = 'Fingerabdruck noch nicht verfügbar';
+      return null;
+    }
+  }
+
   void setDeviceId(String value) {
     deviceId = value.trim();
     notifyListeners();
@@ -199,6 +262,7 @@ class HoobirdController extends ChangeNotifier {
 }
 
 Future<void> initVodozemac() async {
+  if (olm.isInitialized()) return;
   if (Platform.isLinux) {
     final executableDir = File(Platform.resolvedExecutable).parent.path;
     final candidates = [

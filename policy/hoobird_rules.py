@@ -12,6 +12,7 @@ docs/confirmed-product-spec.md. They are not confirmed product decisions.
 
 from __future__ import annotations
 
+import base64
 import re
 from dataclasses import dataclass, field
 
@@ -87,6 +88,25 @@ def valid_username(username: str) -> bool:
 
 def valid_device_id(device_id: str) -> bool:
     return bool(DEVICE_ID_RE.fullmatch(device_id))
+
+
+def valid_ed25519(value: str) -> bool:
+    """True when value is unpadded standard base64 for exactly 32 bytes.
+
+    This checks the length of a public key the parent says they saw.
+    It does not verify a signature and it does not create a key.
+    """
+
+    if not isinstance(value, str) or not 42 <= len(value) <= 44:
+        return False
+    if any(char not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/" for char in value):
+        return False
+    padding = "=" * ((4 - len(value) % 4) % 4)
+    try:
+        raw = base64.b64decode(value + padding, validate=True)
+    except Exception:
+        return False
+    return len(raw) == 32
 
 
 def contact_allowed(facts: ContactFacts) -> bool:

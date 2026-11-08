@@ -29,6 +29,7 @@ class _GatePageState extends State<GatePage> {
     _device.text = widget.controller.deviceId;
     _policy.text = widget.controller.policyUrl;
     _server.text = widget.controller.homeserver;
+    widget.controller.prepareFingerprint();
   }
 
   @override
@@ -95,8 +96,13 @@ class _GatePageState extends State<GatePage> {
               decoration: const InputDecoration(
                 labelText: 'Gerätekennung',
                 helperText:
-                    'Bei einem Kinderkonto muss ein Elternteil genau diese Kennung freigeben. Sie ist keine Schlüsselfingerabdruck-Bindung.',
+                    'Bei einem Kinderkonto muss ein Elternteil diese Kennung und die ed25519-Zeile darunter freigeben, bevor die Anmeldung Schlüssel hochlädt.',
               ),
+            ),
+            const SizedBox(height: 12),
+            SelectableText(
+              'ed25519: ${controller.fingerprintStatus}',
+              semanticsLabel: 'ed25519-Kennung dieses Geräts',
             ),
             const SizedBox(height: 8),
             Align(

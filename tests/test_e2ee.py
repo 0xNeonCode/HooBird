@@ -64,6 +64,35 @@ async def _login(user_id: str, password: str, device_id: str, store: str) -> Asy
     return client
 
 
+async def _login_bound_child(stack, child: dict, parent_token: str, device_id: str, store: str) -> AsyncClient:
+    """Approve the Olm ed25519 key this client will actually upload, then log in."""
+
+    os.makedirs(store, exist_ok=True)
+    client = AsyncClient(
+        SERVER,
+        child["user_id"],
+        device_id=device_id,
+        store_path=store,
+        config=AsyncClientConfig(encryption_enabled=True, store_sync_tokens=True),
+    )
+    # nio leaves user_id empty until login. The store needs it to create the
+    # Olm account whose public key the parent approves before any upload.
+    client.user_id = child["user_id"]
+    client.load_store()
+    assert client.olm is not None
+    ed25519 = client.olm.account.identity_keys["ed25519"]
+    approved = stack.client.post(
+        f"http://127.0.0.1:18018/_hoobird/v1/children/{quote(child['user_id'], safe='')}/devices",
+        json={"device_id": device_id, "ed25519": ed25519},
+        headers=stack.h(parent_token),
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["binds_key_fingerprint"] is True
+    response = await client.login(child["password"], device_name=device_id)
+    assert isinstance(response, LoginResponse), response
+    return client
+
+
 class SeenTexts:
     def __init__(self) -> None:
         self.bodies: dict[str, list[str]] = {}
@@ -163,11 +192,8 @@ def test_encrypted_text_group_media_and_second_device(stack):
 
 async def _scenario(stack) -> None:
     parent = stack.create(stack.admin["access_token"], role="parent")
-    child = stack.create(
-        stack.login(parent["username"], parent["password"], "ELTERNDEV01")["access_token"],
-        role="child",
-        device_id="KINDGERAET01",
-    )
+    parent_token = stack.login(parent["username"], parent["password"], "ELTERNDEV01")["access_token"]
+    child = stack.create(parent_token, role="child")
     # The create call above consumed a login only for its token. Authorize the
     # parent's second device explicitly; parents are not device-limited.
     adult = stack.create(stack.admin["access_token"], role="adult")
@@ -188,7 +214,7 @@ async def _scenario(stack) -> None:
     try:
         parent_a = await _login(parent["user_id"], parent["password"], "ELTERNDEV01", f"{root}/pa")
         parent_b = await _login(parent["user_id"], parent["password"], "ELTERNDEV02", f"{root}/pb")
-        child_c = await _login(child["user_id"], child["password"], "KINDGERAET01", f"{root}/ch")
+        child_c = await _login_bound_child(stack, child, parent_token, "KINDGERAET01", f"{root}/ch")
         adult_c = await _login(adult["user_id"], adult["password"], "ERWACHSEN01", f"{root}/ad")
         clients.extend([parent_a, parent_b, child_c, adult_c])
         for client in clients:
