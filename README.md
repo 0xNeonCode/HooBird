@@ -17,7 +17,7 @@ Er ist kein Produkt, keine Beta und keine Einladung, Kinder oder andere Personen
 Diese Lücken sind Teil des Prototyps. Sie stehen auch in `SECURITY.md`.
 
 - Ein generischer Matrix-Client spricht Synapse direkt an. Die App erzwingt die Richtlinie nicht. Der Server muss es tun.
-- Eine Kinder-Gerätefreigabe speichert die ed25519-Kennung des Geräts. Die Anmeldung verlangt diese Zeile. Der Homeserver-Prozess weist `/keys/upload` zurück, wenn die Signatur nicht dazu passt. Fehlt diese Umwicklung, wird die Kinderanmeldung abgelehnt. Cross-Signing hat weiter keinen eigenen Callback. Der Widerruf löscht das Synapse-Gerät.
+- Eine Kinder-Gerätefreigabe speichert die ed25519-Kennung des Geräts. Die Anmeldung verlangt diese Zeile. Der Homeserver-Prozess weist `/keys/upload` zurück, wenn die Signatur nicht dazu passt. Cross-Signing und `/keys/signatures/upload` laufen über dieselbe Umwicklung: ein Master-Schlüssel bestätigt ein Gerät erst, nachdem ein freigegebenes Gerät ihn signiert hat. Fehlt die Umwicklung, wird die Kinderanmeldung abgelehnt. Der Widerruf löscht das Synapse-Gerät.
 - Gruppen-Wettlauf: Sperre und Einladung sind keine gemeinsame Transaktion. Nach der Sperre versucht der Dienst, den gesperrten Kontakt aus den schon betretenen Räumen des Kindes zu entfernen. Das Fenster bleibt. Inhalt soll fehlschlagen, sobald die Sperre sichtbar ist. Das Kind wird nicht automatisch entfernt.
 - Späteres Mitglied: ein danach freigegebenes Mitglied wird eingeladen und sieht frühere Ereignisse nicht. Ein unerlaubtes späteres Mitglied wird abgelehnt.
 - Die Medienprüfung sieht den Dateianfang. Die Megolm-Form ist keine kryptografische Prüfung.

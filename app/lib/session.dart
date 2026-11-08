@@ -148,11 +148,18 @@ class HoobirdController extends ChangeNotifier {
   Future<void> logout() async {
     busy = true;
     notifyListeners();
+    final matrix = client;
     try {
-      await client?.logout();
-    } catch (_) {
-      await client?.clear();
-    }
+      if (matrix != null) {
+        matrix.backgroundSync = false;
+        try {
+          await matrix.abortSync();
+        } catch (_) {}
+        // logout already closes the database. A second dispose races with
+        // that close and the SDK logs database_closed.
+        await matrix.logout();
+      }
+    } catch (_) {}
     me = null;
     recoveryKeyShownOnce = null;
     busy = false;

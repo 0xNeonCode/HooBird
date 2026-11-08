@@ -530,3 +530,144 @@ def test_plaintext_media_is_rejected_and_room_policy_sticks(stack):
         },
     )
     assert threepid.status_code == 403, threepid.text
+
+
+def test_child_cross_signing_and_backups_stay_bound_to_the_approved_device(stack):
+    from tests.device_keys import CrossSigningKey, DeviceKey
+
+    parent = stack.create(stack.admin["access_token"], role="parent")
+    session = stack.login(parent["username"], parent["password"], "ELTERNDEV21")
+    device = DeviceKey("XSIGNDEV01")
+    child = stack.create(
+        session["access_token"],
+        role="child",
+        device_id="XSIGNDEV01",
+        ed25519=device.ed25519,
+    )
+    logged = stack.login(child["username"], child["password"], "XSIGNDEV01")
+    token = logged["access_token"]
+    user = child["user_id"]
+    uploaded = stack.mx(
+        "POST",
+        "/_matrix/client/v3/keys/upload",
+        token,
+        {"device_keys": device.signed_device_keys(user)},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    master = CrossSigningKey("master")
+    self_signing = CrossSigningKey("self_signing")
+    user_signing = CrossSigningKey("user_signing")
+    signing = stack.mx(
+        "POST",
+        "/_matrix/client/v3/keys/device_signing/upload",
+        token,
+        {
+            "master_key": master.body(user),
+            "self_signing_key": self_signing.signed_by(user, master),
+            "user_signing_key": user_signing.signed_by(user, master),
+        },
+    )
+    assert signing.status_code == 200, signing.text
+    device_document = self_signing.sign(device.signed_device_keys(user), user)
+    too_early = stack.mx(
+        "POST",
+        "/_matrix/client/v3/keys/signatures/upload",
+        token,
+        {user: {"XSIGNDEV01": device_document}},
+    )
+    assert too_early.status_code == 403, too_early.text
+    assert "master_not_bound" in too_early.text
+    stranger = DeviceKey("XSIGNDEV99")
+    foreign = stack.mx(
+        "POST",
+        "/_matrix/client/v3/keys/signatures/upload",
+        token,
+        {user: {"XSIGNDEV99": stranger.signed_device_keys(user)}},
+    )
+    assert foreign.status_code == 403, foreign.text
+    assert "signing_target_not_approved" in foreign.text
+    bound = stack.mx(
+        "POST",
+        "/_matrix/client/v3/keys/signatures/upload",
+        token,
+        {user: {master.public: device.sign(master.body(user), user), "XSIGNDEV01": device_document}},
+    )
+    assert bound.status_code == 200, bound.text
+    assert bound.json().get("failures") in ({}, None) or bound.json()["failures"] == {}
+    replacement = CrossSigningKey("master")
+    replaced = {
+        "master_key": replacement.body(user),
+        "self_signing_key": self_signing.signed_by(user, replacement),
+        "user_signing_key": user_signing.signed_by(user, replacement),
+    }
+    challenge = stack.mx("POST", "/_matrix/client/v3/keys/device_signing/upload", token, replaced)
+    assert challenge.status_code == 401, challenge.text
+    session_id = challenge.json()["session"]
+    confirmed = stack.mx(
+        "POST",
+        "/_matrix/client/v3/keys/device_signing/upload",
+        token,
+        {
+            **replaced,
+            "auth": {
+                "type": "m.login.password",
+                "session": session_id,
+                "identifier": {"type": "m.id.user", "user": user},
+                "password": child["password"],
+            },
+        },
+    )
+    assert confirmed.status_code == 403, confirmed.text
+    assert "master_replacement_unbound" in confirmed.text
+    marker = "hoobird-backup-marker"
+    backup = stack.mx(
+        "POST",
+        "/_matrix/client/v3/room_keys/version",
+        token,
+        {
+            "algorithm": "m.megolm_backup.v1.curve25519-aes-sha2",
+            "auth_data": {"public_key": marker, "signatures": {}},
+        },
+    )
+    assert backup.status_code == 200, backup.text
+    parent_backup = stack.mx("GET", "/_matrix/client/v3/room_keys/version", session["access_token"])
+    assert marker not in parent_backup.text
+    child_backup = stack.mx("GET", "/_matrix/client/v3/room_keys/version", token)
+    assert child_backup.status_code == 200, child_backup.text
+    assert marker in child_backup.text
+    impersonate = stack.mx(
+        "POST",
+        f"/_synapse/admin/v1/users/{quote(user, safe='')}/login",
+        session["access_token"],
+        {},
+    )
+    assert impersonate.status_code in (401, 403), impersonate.text
+    dehydrated = stack.mx(
+        "PUT",
+        "/_matrix/client/unstable/org.matrix.msc3814.v1/dehydrated_device",
+        token,
+        {"device_id": "DEHYDRATED01", "device_data": {"algorithm": "org.matrix.msc2697.v1.dehydration.v1.olm"}},
+    )
+    assert dehydrated.status_code != 200, dehydrated.text
+    reset_password = secrets.token_urlsafe(18)
+    reset = stack.client.post(
+        f"{POLICY}/_hoobird/v1/accounts/{quote(user, safe='')}/reset-password",
+        json={"new_password": reset_password},
+        headers=stack.h(session["access_token"]),
+    )
+    assert reset.status_code == 200, reset.text
+    assert marker not in reset.text
+    assert reset.json()["recovery_key_returned"] is False
+    assert reset.json()["message_keys_returned"] is False
+    parent_again = stack.mx("GET", "/_matrix/client/v3/room_keys/version", session["access_token"])
+    assert marker not in parent_again.text
+    adult = stack.create(stack.admin["access_token"], role="adult")
+    adult_session = stack.login(adult["username"], adult["password"], "ADULTXSIGN01")
+    adult_master = CrossSigningKey("master")
+    adult_upload = stack.mx(
+        "POST",
+        "/_matrix/client/v3/keys/device_signing/upload",
+        adult_session["access_token"],
+        {"master_key": adult_master.body(adult["user_id"])},
+    )
+    assert adult_upload.status_code == 200, adult_upload.text

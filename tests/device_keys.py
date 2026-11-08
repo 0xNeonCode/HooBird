@@ -12,8 +12,16 @@ from __future__ import annotations
 import base64
 import secrets
 
-from signedjson.key import encode_verify_key_base64, generate_signing_key, get_verify_key
+import nacl.signing
+from signedjson.key import (
+    decode_signing_key_base64,
+    encode_signing_key_base64,
+    encode_verify_key_base64,
+    generate_signing_key,
+    get_verify_key,
+)
 from signedjson.sign import sign_json
+from unpaddedbase64 import encode_base64
 
 
 def random_ed25519() -> str:
@@ -39,3 +47,39 @@ class DeviceKey:
         }
         sign_json(body, user_id, self._key)
         return body
+
+    def sign(self, body: dict, user_id: str) -> dict:
+        signed = dict(body)
+        sign_json(signed, user_id, self._key)
+        return signed
+
+
+class CrossSigningKey:
+    """A Matrix cross-signing key whose id is the public key itself.
+
+    signedjson's version has to be that public key. This is the object shape
+    from the Matrix specification, not a new signature algorithm.
+    """
+
+    def __init__(self, usage: str):
+        raw = nacl.signing.SigningKey.generate()
+        self.public = encode_base64(bytes(raw.verify_key))
+        self.usage = usage
+        self._key = decode_signing_key_base64(
+            "ed25519", self.public, encode_signing_key_base64(raw)
+        )
+
+    def body(self, user_id: str) -> dict:
+        return {
+            "user_id": user_id,
+            "usage": [self.usage],
+            "keys": {f"ed25519:{self.public}": self.public},
+        }
+
+    def signed_by(self, user_id: str, signer) -> dict:
+        return signer.sign(self.body(user_id), user_id)
+
+    def sign(self, body: dict, user_id: str) -> dict:
+        signed = dict(body)
+        sign_json(signed, user_id, self._key)
+        return signed

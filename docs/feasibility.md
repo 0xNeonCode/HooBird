@@ -40,7 +40,7 @@ Vorhandene Spam-Checker-Callbacks, die das Modul registriert: `check_event_for_s
 
 Zusätzlich, weil der Spam-Checker den Raumzustand nicht mitliefert: Third-Party-Rules `check_event_allowed` und `on_create_room`. `check_event_allowed` ist in Synapse als experimentell gekennzeichnet. Der Prototyp benutzt es trotzdem, weil nur dort der aktuelle Zustand ankommt. `on_create_room` erzwingt nicht-föderiert, privat, Megolm, Einladung, Historie `joined`, kein Gastzugang.
 
-Nicht vorhanden und deshalb nicht gehookt: ein Modul-Callback für `/keys/upload`, `/keys/device_signing/upload` und `/keys/signatures/upload`. Nach dem Widerruf löscht der Policy-Dienst das Synapse-Gerät. Das alte Token stirbt. Ein neues Login mit derselben freigegebenen Kennung ist wieder möglich. Die Kennung ist kein Fingerabdruck.
+Nicht vorhanden: ein Modul-Callback für `/keys/upload`, `/keys/device_signing/upload` und `/keys/signatures/upload`. Der laufende Meilenstein umwickelt deshalb die Handler-Methoden in diesem Synapse-Prozess und lehnt die Kinderanmeldung ab, wenn die Umwicklung nicht sitzt. Das ist an Synapse 1.163 gemessen, nicht an einem anderen Homeserver. Nach dem Widerruf löscht der Policy-Dienst das Synapse-Gerät. Das alte Token stirbt. Ein neues Login mit derselben freigegebenen Kennung ist wieder möglich. Die Kennung ist kein Fingerabdruck.
 
 Föderation ist serverseitig aus: kein Federation-Listener, `federation_domain_whitelist: []`, `should_drop_federated_event` liefert wahr, Räume werden auf `m.federate: false` gezwungen, `trusted_key_servers: []`. Der Test ruft die Federation-Version und einen Join nach `#matrix:matrix.org` auf.
 

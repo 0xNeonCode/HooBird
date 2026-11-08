@@ -52,7 +52,7 @@ Diese Punkte sind keine bestätigte Produktentscheidung. Sie sind die enge Ausle
 ## Offen
 
 - Wer ein verlorenes Elternkonto wiederherstellt, und ob ein Elternteil sich einseitig lösen darf.
-- Ob Cross-Signing und `/keys/signatures/upload` eine eigene Prüfung bekommen. Der Geräte-Upload ist gebunden. Eine Ersetzung des Master-Schlüssels prüft Synapse selbst.
+- Cross-Signing und `/keys/signatures/upload` haben eine eigene Prüfung. Sie sitzt auf den Handler-Methoden, weil Synapse 1.163 keinen Callback dafür hat. Ein ungebundener Master-Schlüssel darf noch hochgeladen werden. Er bestätigt kein Gerät. Die Ersetzung eines gebundenen Master-Schlüssels verlangt eine Signatur eines freigegebenen Geräts, nicht nur das Passwort.
 - Die Oberfläche, wenn eine Kindergruppe später eine nicht freigegebene Person bekommen würde. Der Prototyp lehnt die neue Mitgliedschaft und neuen Inhalt ab und entfernt das Kind nicht von selbst.
 - Ob die Verknüpfung als QR, als Code oder als beides erscheint.
 - Push ohne Klartext.

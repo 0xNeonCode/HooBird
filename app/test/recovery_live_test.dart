@@ -294,11 +294,11 @@ Future<void> _stop(Client client) async {
   try {
     await client.abortSync();
   } catch (_) {}
+  // Give the sync that abortSync cannot cancel a moment to leave the
+  // database. logout closes it. dispose would close it again.
+  await Future<void>.delayed(const Duration(milliseconds: 200));
   try {
     await client.logout();
-  } catch (_) {}
-  try {
-    await client.dispose();
   } catch (_) {}
 }
 

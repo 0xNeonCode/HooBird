@@ -3,17 +3,29 @@
 """Synapse module: enforce HooBird child policy inside the homeserver.
 
 Generic clients hit these hooks even when they skip the HooBird app.
-Synapse 1.163 has no module callback for /keys/upload. This module therefore
-wraps E2eKeysHandler.upload_keys_for_user inside the homeserver process.
-A child can publish device keys only when they are signed by the ed25519 key
-a parent already stored. If that wrap cannot be installed, child logins are
-refused. Revocation still deletes the Synapse device.
+Synapse 1.163 has no module callback for /keys/upload,
+/keys/device_signing/upload, or /keys/signatures/upload. This module therefore
+wraps those three methods on the live E2eKeysHandler object. The servlets in
+this version look the methods up on that object when a request arrives. If any
+wrap cannot be installed, or the servlet source no longer calls it, child
+logins are refused.
+
+A child can publish device keys only when they are signed by the ed25519 key a
+parent already stored. Cross-signing material can be uploaded before that
+device signs the master key, because the Matrix Dart SDK does those steps in
+that order. Signatures cannot bless a device until the master key carries a
+signature from an approved device. Replacing a bound master key requires a new
+signature from an approved device. MSC3814 dehydrated devices are disabled in
+this homeserver. If that flag is turned on, a child dehydrated device is
+refused unless its device keys match an approved fingerprint. If that wrap
+cannot be installed, child logins are refused.
 
 Policy reads are fail-closed: a database error rejects the operation.
 """
 
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import Mapping
 
@@ -26,7 +38,11 @@ from twisted.web.resource import Resource
 from twisted.web.server import NOT_DONE_YET
 
 from hoobird_policy_api.store import PolicyStore
-from device_key_check import child_key_upload_decision
+from device_key_check import (
+    child_cross_signing_upload_decision,
+    child_key_upload_decision,
+    child_signature_upload_decision,
+)
 from hoobird_rules import (
     apply_member_event,
     content_event_allowed,
@@ -77,7 +93,11 @@ class HoobirdPolicyModule:
         )
         self.key_guard = self._install_key_guard()
         api.register_web_resource("/_hoobird/internal/reconcile", _ReconcileResource(self))
-        logger.info("hoobird policy module registered key_guard=%s", self.key_guard)
+        logger.info(
+            "hoobird policy module registered key_guard=%s dehydrated_devices=%s",
+            self.key_guard,
+            getattr(self, "dehydrated_devices_enabled", None),
+        )
 
     @staticmethod
     def parse_config(config: dict) -> dict:
@@ -289,17 +309,131 @@ class HoobirdPolicyModule:
         except Exception:
             logger.exception("e2e key handler missing")
             return False
-        original = handler.upload_keys_for_user
+        if not _servlets_call_handler_methods():
+            logger.error("synapse key servlets no longer call the wrapped handler methods")
+            return False
+        original_upload = handler.upload_keys_for_user
+        original_signing = handler.upload_signing_keys_for_user
+        original_signatures = handler.upload_signatures_for_device_keys
 
-        async def guarded(user_id: str, device_id: str, keys: dict):
+        async def guarded_upload(user_id: str, device_id: str, keys: dict):
             decision = await self._child_upload_decision(handler, user_id, device_id, keys)
             if decision != "allow":
                 logger.info("child key upload rejected: %s", decision)
                 raise SynapseError(403, decision, errors.Codes.FORBIDDEN)
-            return await original(user_id, device_id, keys)
+            return await original_upload(user_id, device_id, keys)
 
-        handler.upload_keys_for_user = guarded
+        async def guarded_signing(user_id: str, keys: dict):
+            decision = await self._child_signing_decision(handler, user_id, keys)
+            if decision != "allow":
+                logger.info("child signing-key upload rejected: %s", decision)
+                raise SynapseError(403, decision, errors.Codes.FORBIDDEN)
+            return await original_signing(user_id, keys)
+
+        async def guarded_signatures(user_id: str, signatures: dict):
+            decision = await self._child_signature_decision(handler, user_id, signatures)
+            if decision != "allow":
+                logger.info("child signature upload rejected: %s", decision)
+                raise SynapseError(403, decision, errors.Codes.FORBIDDEN)
+            return await original_signatures(user_id, signatures)
+
+        handler.upload_keys_for_user = guarded_upload
+        handler.upload_signing_keys_for_user = guarded_signing
+        handler.upload_signatures_for_device_keys = guarded_signatures
+        if (
+            handler.upload_keys_for_user is not guarded_upload
+            or handler.upload_signing_keys_for_user is not guarded_signing
+            or handler.upload_signatures_for_device_keys is not guarded_signatures
+        ):
+            logger.error("key upload wrappers were not installed on the live handler")
+            return False
+        self.dehydrated_devices_enabled = bool(
+            getattr(homeserver.config.experimental, "msc3814_enabled", False)
+        )
+        if self.dehydrated_devices_enabled and not self._install_dehydrated_guard(homeserver):
+            return False
         return True
+
+    def _install_dehydrated_guard(self, homeserver) -> bool:
+        try:
+            device_handler = homeserver.get_device_handler()
+        except Exception:
+            logger.exception("device handler missing")
+            return False
+        original = getattr(device_handler, "store_dehydrated_device", None)
+        if original is None:
+            logger.error("dehydrated device storage is enabled but the method is missing")
+            return False
+
+        async def guarded(user_id, device_id, device_data, initial_device_display_name, keys_for_device):
+            decision = self._dehydrated_decision(user_id, device_id, keys_for_device)
+            if decision != "allow":
+                logger.info("child dehydrated device rejected: %s", decision)
+                raise SynapseError(403, decision, errors.Codes.FORBIDDEN)
+            return await original(
+                user_id, device_id, device_data, initial_device_display_name, keys_for_device
+            )
+
+        device_handler.store_dehydrated_device = guarded
+        return device_handler.store_dehydrated_device is guarded
+
+    def _dehydrated_decision(self, user_id: str, device_id: str | None, keys_for_device) -> str:
+        try:
+            if self.store.role_of(user_id) != "child":
+                return "allow"
+            if not isinstance(device_id, str) or not device_id:
+                return "device_not_authorized"
+            body = keys_for_device if isinstance(keys_for_device, Mapping) else {}
+            present = body.get("device_keys")
+            return child_key_upload_decision(
+                approved_ed25519=self.store.device_ed25519(user_id, device_id),
+                device_keys=present,
+                user_id=user_id,
+                device_id=device_id,
+                published_ed25519=None,
+                uploads_material=True,
+            )
+        except Exception:
+            logger.exception("dehydrated device decision failed")
+            return "policy_store_unavailable"
+
+    async def _child_signing_decision(self, handler, user_id: str, keys: dict) -> str:
+        try:
+            if self.store.role_of(user_id) != "child":
+                return "allow"
+            approved = _approved_ed25519(self, user_id)
+            published = await _published_ed25519_map(handler, user_id)
+            # Signatures live in a separate table. Passing the user includes
+            # the signatures that user made on the master key.
+            stored = await handler.store.get_e2e_cross_signing_key(user_id, "master", user_id)
+            return child_cross_signing_upload_decision(
+                body=keys,
+                user_id=user_id,
+                approved=approved,
+                published=published,
+                stored_master=stored,
+            )
+        except Exception:
+            logger.exception("child signing-key decision failed")
+            return "policy_store_unavailable"
+
+    async def _child_signature_decision(self, handler, user_id: str, signatures: dict) -> str:
+        try:
+            if self.store.role_of(user_id) != "child":
+                return "allow"
+            approved = _approved_ed25519(self, user_id)
+            published = await _published_ed25519_map(handler, user_id)
+            stored = await handler.store.get_e2e_cross_signing_key(user_id, "master", user_id)
+            return child_signature_upload_decision(
+                user_id=user_id,
+                signatures=signatures,
+                approved=approved,
+                published=published,
+                stored_master=stored,
+            )
+        except Exception:
+            logger.exception("child signature decision failed")
+            return "policy_store_unavailable"
 
     async def _child_upload_decision(self, handler, user_id: str, device_id: str, keys: dict) -> str:
         try:
@@ -404,6 +538,66 @@ class _ReconcileResource(Resource):
         import json
 
         return json.dumps({"kicked_rooms": kicked}).encode()
+
+
+def _servlets_call_handler_methods() -> bool:
+    """Fail closed when this Synapse build no longer reaches the wrapped methods.
+
+    The check reads the servlet source that is installed in the process. A
+    renamed call, or a copy of the bound method taken at startup, makes the
+    guard report itself missing and child logins stop.
+    """
+
+    try:
+        from synapse.rest.client.keys import (
+            KeyUploadServlet,
+            SignaturesUploadServlet,
+            SigningKeyUploadServlet,
+        )
+    except Exception:
+        logger.exception("synapse key servlets could not be imported")
+        return False
+    expected = {
+        KeyUploadServlet: "upload_keys_for_user",
+        SigningKeyUploadServlet: "upload_signing_keys_for_user",
+        SignaturesUploadServlet: "upload_signatures_for_device_keys",
+    }
+    for servlet, method in expected.items():
+        try:
+            # on_POST may be a decorator wrapper whose body does not name the
+            # handler. The class source is the version that is installed.
+            source = inspect.getsource(servlet)
+        except Exception:
+            logger.exception("could not read %s", servlet.__name__)
+            return False
+        if "e2e_keys_handler" not in source or method not in source:
+            logger.error("%s no longer calls %s on the handler", servlet.__name__, method)
+            return False
+    return True
+
+
+def _approved_ed25519(module, user_id: str) -> dict[str, str]:
+    approved: dict[str, str] = {}
+    for row in module.store.list_devices(user_id):
+        device_id = row.get("device_id")
+        ed25519 = row.get("ed25519")
+        if isinstance(device_id, str) and isinstance(ed25519, str) and ed25519:
+            approved[device_id] = ed25519
+    return approved
+
+
+async def _published_ed25519_map(handler, user_id: str) -> dict[str, str]:
+    found = await handler.store.get_e2e_device_keys_for_cs_api([(user_id, None)])
+    devices = (found or {}).get(user_id) or {}
+    published: dict[str, str] = {}
+    for device_id, device in devices.items():
+        if not isinstance(device, Mapping):
+            continue
+        keys = device.get("keys") or {}
+        value = keys.get(f"ed25519:{device_id}")
+        if isinstance(device_id, str) and isinstance(value, str):
+            published[device_id] = value
+    return published
 
 
 async def _published_ed25519(handler, user_id: str, device_id: str) -> str | None:
