@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_vodozemac/flutter_vodozemac.dart' as vod;
 import 'package:matrix/encryption.dart';
 import 'package:matrix/matrix.dart';
@@ -48,6 +49,7 @@ class HoobirdController extends ChangeNotifier {
     homeserver = prefs.getString('homeserver') ?? defaultHomeserver;
     sendTyping = prefs.getBool('send_typing') ?? true;
     sendReceipts = prefs.getBool('send_receipts') ?? false;
+    hideNotificationContent = prefs.getBool('hide_notification_content') ?? true;
   }
 
   final SharedPreferences prefs;
@@ -59,6 +61,7 @@ class HoobirdController extends ChangeNotifier {
   late String homeserver;
   late bool sendTyping;
   late bool sendReceipts;
+  late bool hideNotificationContent;
   bool busy = false;
   String? error;
   Map<String, dynamic>? me;
@@ -203,6 +206,20 @@ class HoobirdController extends ChangeNotifier {
   Future<void> setSendReceipts(bool value) async {
     sendReceipts = value;
     await prefs.setBool('send_receipts', value);
+    notifyListeners();
+  }
+
+  Future<void> setHideNotificationContent(bool value) async {
+    hideNotificationContent = value;
+    await prefs.setBool('hide_notification_content', value);
+    if (Platform.isAndroid) {
+      const channel = MethodChannel('dev.hoobird.spike.hoobird/notify');
+      try {
+        await channel.invokeMethod<void>('lockscreen', {'hideContent': value});
+      } on PlatformException {
+        // The preference is still stored. Push delivery is not built.
+      }
+    }
     notifyListeners();
   }
 

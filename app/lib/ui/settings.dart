@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../policy_api.dart';
 import '../session.dart';
 import 'legal.dart';
+import 'link_qr.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key, required this.controller});
@@ -20,6 +21,12 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   String? _notice;
   var _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.setHideNotificationContent(widget.controller.hideNotificationContent);
+  }
 
   Future<void> _run(Future<void> Function() action) async {
     setState(() {
@@ -56,7 +63,7 @@ class _SettingsPageState extends State<SettingsPage> {
         Text('Rolle $role · Gerät ${controller.client?.deviceID ?? controller.deviceId}'),
         const SizedBox(height: 8),
         const Text(
-          'Die Matrix-ID bleibt stehen, wenn sich der Nutzername ändert. Verschlüsselt ist nicht dasselbe wie identitätsverifiziert. Dieser Prototyp startet keine QR- oder Bluetooth-Prüfung.',
+          'Die Matrix-ID bleibt stehen, wenn sich der Nutzername ändert. Verschlüsselt ist nicht dasselbe wie identitätsverifiziert. Eine Identitätsprüfung per QR oder Bluetooth gibt es nicht. Der Eltern-Code kann als QR gezeigt werden; die Kamera liest ihn hier nicht.',
         ),
         const SizedBox(height: 16),
         SegmentedButton<ThemeMode>(
@@ -82,6 +89,15 @@ class _SettingsPageState extends State<SettingsPage> {
           subtitle: const Text('Aus ist die Voreinstellung. Dann erfährt der Absender nicht, dass eine Nachricht hier geöffnet wurde.'),
           value: controller.sendReceipts,
           onChanged: (value) => controller.setSendReceipts(value),
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Inhalt auf dem Sperrbildschirm verbergen'),
+          subtitle: const Text(
+            'Voreinstellung an. Der Android-Kanal merkt sich das. Eine Push-Zustellung gibt es in dieser Fassung nicht, deshalb erscheint auch keine Vorschau.',
+          ),
+          value: controller.hideNotificationContent,
+          onChanged: (value) => controller.setHideNotificationContent(value),
         ),
         const SizedBox(height: 16),
         FilledButton(
@@ -155,15 +171,20 @@ class _ParentPanelState extends State<ParentPanel> {
   final _username = TextEditingController();
   final _device = TextEditingController();
   final _ed25519 = TextEditingController();
+  final _redeemChild = TextEditingController();
+  final _redeemCode = TextEditingController();
   String? _selectedChild;
   Map<String, dynamic>? _policy;
   String? _notice;
+  String? _linkPayload;
 
   @override
   void dispose() {
     _username.dispose();
     _device.dispose();
     _ed25519.dispose();
+    _redeemChild.dispose();
+    _redeemCode.dispose();
     super.dispose();
   }
 
@@ -199,6 +220,26 @@ class _ParentPanelState extends State<ParentPanel> {
     throw PolicyException(404, 'not_found', 'Kein eindeutiger Nutzername.');
   }
 
+  Future<void> _redeem() async {
+    final token = widget.controller.accessToken;
+    if (token == null) return;
+    var childId = _redeemChild.text.trim();
+    var code = _redeemCode.text.trim();
+    final lines = code.split(RegExp(r'\r?\n')).map((line) => line.trim()).where((line) => line.isNotEmpty).toList();
+    if (lines.length >= 3 && lines.first == 'hoobird-link:v1') {
+      childId = lines[1];
+      code = lines[2];
+    }
+    try {
+      await widget.controller.api.redeemParent(token, childId, code);
+      await widget.controller.refreshMe();
+      setState(() => _notice = 'Verknüpft. Das beweist keine Sorgeberechtigung.');
+      if (childId.isNotEmpty) await _load(childId);
+    } on PolicyException catch (exc) {
+      setState(() => _notice = exc.message);
+    }
+  }
+
   Future<void> _act(Future<void> Function(String token, String childId) action) async {
     final token = widget.controller.accessToken;
     final childId = _selectedChild;
@@ -218,6 +259,21 @@ class _ParentPanelState extends State<ParentPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        const Text(
+          'Ein Elternteil zeigt den Code, das andere tippt ihn ab. Die Sperre eines Elternteils bleibt, bis genau dieses Elternteil sie aufhebt. Eine erneute Freigabe des anderen hebt sie nicht auf. Nachrichten und Schlüssel stehen hier nicht.',
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _redeemChild,
+          decoration: const InputDecoration(labelText: 'Matrix-ID des Kinderkontos'),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _redeemCode,
+          decoration: const InputDecoration(labelText: 'Verknüpfungscode oder dreizeiliger QR-Text'),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton(onPressed: _redeem, child: const Text('Code einlösen')),
         if (children.isEmpty) const Text('Keine verknüpften Kinderkonten.'),
         for (final child in children)
           ListTile(
@@ -316,14 +372,19 @@ class _ParentPanelState extends State<ParentPanel> {
                 onPressed: () => _act((token, childId) async {
                   final code = await widget.controller.api.linkCode(token, childId);
                   setState(() {
+                    _linkPayload = 'hoobird-link:v1\n$childId\n${code['code']}';
                     _notice =
-                        'Code ${code['code']}. Gilt ${code['ttl_seconds']} Sekunden. Beweist nicht: ${code['does_not_prove']}. QR ist nicht umgesetzt.';
+                        'Gilt ${code['ttl_seconds']} Sekunden. Beweist nicht: ${code['does_not_prove']}. Die App öffnet dafür keine Kamera.';
                   });
                 }),
-                child: const Text('Verknüpfungscode'),
+                child: const Text('Verknüpfungscode zeigen'),
               ),
             ],
           ),
+        ],
+        if (_linkPayload != null) ...[
+          const SizedBox(height: 12),
+          LinkQr(payload: _linkPayload!),
         ],
         if (_notice != null) ...[
           const SizedBox(height: 8),

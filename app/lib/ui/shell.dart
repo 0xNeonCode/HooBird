@@ -141,7 +141,8 @@ class _ChatListState extends State<ChatList> {
 
         final active = joined.where((room) => !room.isLowPriority && matches(room)).toList()..sort(byRecent);
         final archived = joined.where((room) => room.isLowPriority && matches(room)).toList()..sort(byRecent);
-        final visible = [...active, if (_showArchive) ...archived];
+        final archiveOpen = _showArchive && archived.isNotEmpty;
+        final visible = [...active, if (archiveOpen) ...archived];
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -190,7 +191,7 @@ class _ChatListState extends State<ChatList> {
                         if (index == visible.length) {
                           return TextButton(
                             onPressed: archived.isEmpty ? null : () => setState(() => _showArchive = !_showArchive),
-                            child: Text(_showArchive ? 'Archiv ausblenden' : 'Archiv (${archived.length})'),
+                            child: Text(archiveOpen ? 'Archiv ausblenden' : 'Archiv (${archived.length})'),
                           );
                         }
                         final room = visible[index];

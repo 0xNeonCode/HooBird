@@ -140,6 +140,42 @@ class PolicyApi {
     );
   }
 
+  Future<Map<String, dynamic>> redeemParent(String token, String childId, String code) {
+    return _send(
+      'POST',
+      '/_hoobird/v1/children/$childId/parents',
+      token: token,
+      body: {'code': code},
+    );
+  }
+
+  Future<Map<String, dynamic>> blockPerson(String token, String userId) {
+    return _send(
+      'POST',
+      '/_hoobird/v1/blocks',
+      token: token,
+      body: {'user_id': userId},
+    );
+  }
+
+  Future<Map<String, dynamic>> fileReport(
+    String token, {
+    required String roomId,
+    required String note,
+    required List<Map<String, dynamic>> items,
+  }) {
+    return _send(
+      'POST',
+      '/_hoobird/v1/reports',
+      token: token,
+      body: {
+        'room_id': roomId,
+        'note': note,
+        'items': items,
+      },
+    );
+  }
+
   Future<Map<String, dynamic>> _send(
     String method,
     String path, {

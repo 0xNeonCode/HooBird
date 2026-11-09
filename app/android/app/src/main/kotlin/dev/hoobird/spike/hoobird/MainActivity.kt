@@ -1,6 +1,9 @@
 package dev.hoobird.spike.hoobird
 
 import android.Manifest
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaPlayer
@@ -64,6 +67,29 @@ class MainActivity : FlutterActivity() {
                 }
             },
         )
+        MethodChannel(messenger, "dev.hoobird.spike.hoobird/notify").setMethodCallHandler { call, result ->
+            when (call.method) {
+                "lockscreen" -> {
+                    val hide = call.argument<Boolean>("hideContent") ?: true
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        val manager = getSystemService(NotificationManager::class.java)
+                        val channel =
+                            NotificationChannel(
+                                "hoobird.messages",
+                                "Nachrichten",
+                                NotificationManager.IMPORTANCE_DEFAULT,
+                            )
+                        channel.lockscreenVisibility =
+                            if (hide) Notification.VISIBILITY_SECRET else Notification.VISIBILITY_PRIVATE
+                        channel.description =
+                            "HooBird stellt in dieser Fassung keine Push-Nachricht zu. Die Sperrbildschirm-Sichtbarkeit ist nur vorgemerkt."
+                        manager.createNotificationChannel(channel)
+                    }
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
         MethodChannel(messenger, "dev.hoobird.spike.hoobird/voice").setMethodCallHandler { call, result ->
             when (call.method) {
                 "permission" -> requestMic(result)

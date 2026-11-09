@@ -120,6 +120,8 @@ def test_generic_client_dm_group_block_and_reapproval(stack):
     )
     assert code.status_code == 200, code.text
     assert code.json()["qr_implemented"] is False
+    assert code.json()["qr_display"] is True
+    assert code.json()["qr_camera_scan"] is False
     session_b = stack.login(parent_b["username"], parent_b["password"], "ELTERNDEV02")
     linked = stack.client.post(
         f"{POLICY}/_hoobird/v1/children/{quote(child['user_id'], safe='')}/parents",
@@ -671,3 +673,52 @@ def test_child_cross_signing_and_backups_stay_bound_to_the_approved_device(stack
         {"master_key": adult_master.body(adult["user_id"])},
     )
     assert adult_upload.status_code == 200, adult_upload.text
+
+
+def test_personal_block_and_explicit_report_do_not_expose_text(stack):
+    left = stack.create(stack.admin["access_token"], role="adult")
+    right = stack.create(stack.admin["access_token"], role="adult")
+    parent = stack.create(stack.admin["access_token"], role="parent")
+    left_session = stack.login(left["username"], left["password"], "BLOCKLEFT01")
+    right_session = stack.login(right["username"], right["password"], "BLOCKRIGHT1")
+    parent_session = stack.login(parent["username"], parent["password"], "BLOCKPARENT")
+    room = stack.create_room(left_session["access_token"], [right["user_id"]])
+    assert room.status_code == 200, room.text
+    room_id = room.json()["room_id"]
+    blocked = stack.client.post(
+        f"{POLICY}/_hoobird/v1/blocks",
+        json={"user_id": right["user_id"]},
+        headers=stack.h(left_session["access_token"]),
+    )
+    assert blocked.status_code == 200, blocked.text
+    assert blocked.json()["messages_included"] is False
+    denied_send = stack.send_fake_encrypted(left_session["access_token"], room_id)
+    assert denied_send.status_code == 403, denied_send.text
+    fresh = stack.create_room(right_session["access_token"], [left["user_id"]])
+    assert fresh.status_code == 403, fresh.text
+    secret = "nur-wenn-angehakt"
+    filed = stack.client.post(
+        f"{POLICY}/_hoobird/v1/reports",
+        json={
+            "room_id": room_id,
+            "note": "Hinweis ohne Text",
+            "items": [
+                {"event_id": "$shown", "disclose": True, "body": secret},
+                {"event_id": "$hidden", "disclose": False, "body": "nicht-mitschicken"},
+            ],
+        },
+        headers=stack.h(left_session["access_token"]),
+    )
+    assert filed.status_code == 200, filed.text
+    payload = filed.json()
+    assert payload["disclosed_count"] == 1
+    assert payload["bodies_echoed"] is False
+    assert payload["visible_to_parents"] is False
+    assert secret not in filed.text
+    assert "nicht-mitschicken" not in filed.text
+    parent_read = stack.client.get(
+        f"{POLICY}/_hoobird/v1/reports/{payload['report_id']}",
+        headers=stack.h(parent_session["access_token"]),
+    )
+    assert parent_read.status_code == 404
+    assert secret not in parent_read.text

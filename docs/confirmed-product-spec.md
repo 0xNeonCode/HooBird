@@ -14,7 +14,7 @@ Die Oberfläche ist Deutsch. Helles und dunkles Erscheinungsbild folgen dem Syst
 - Ein persönlicher Sicherungsschlüssel verschlüsselt die Schlüsselkopie. Ohne diesen Schlüssel und ohne ein bereits vertrautes Gerät können Nachrichten unlesbar bleiben.
 - Eine Sicherung der Server-Datenbank, der Mediendateien oder der Servergeheimnisse ist keine Sicherung der privaten Schlüssel. Eine Matrix-Schlüsselkopie allein stellt auch nicht jedes Ereignis und jede Mediendatei wieder her.
 - Ein Kontorücksetzen darf alte Entschlüsselungsschlüssel und bestehendes Vertrauen nicht stillschweigend zurückgeben.
-- Eltern legen ein Kinderkonto an und verknüpfen sich persönlich. Der Prototyp benutzt dafür einen kurzlebigen Code. Ein QR-Code ist nicht umgesetzt. Der Vorgang beweist keine Sorgeberechtigung.
+- Eltern legen ein Kinderkonto an und verknüpfen sich persönlich. Der Prototyp benutzt dafür einen kurzlebigen Code. Die App zeichnet denselben Text als QR. Sie öffnet dafür keine Kamera. Der Vorgang beweist keine Sorgeberechtigung.
 - Höchstens zwei Eltern. Eine Freigabe genügt.
 - Ein Kind schreibt direkt nur an Kontakte, die ein Elternteil freigegeben hat. Eine Gruppe ist nur zulässig, wenn alle anderen Beteiligten für dieses Kind freigegeben sind.
 - Eine Sperre eines Elternteils gilt. Das andere Elternteil hebt sie nicht auf, indem es erneut freigibt.
@@ -26,7 +26,7 @@ Die Oberfläche ist Deutsch. Helles und dunkles Erscheinungsbild folgen dem Syst
 - Ein Empfänger, der etwas rechtmäßig entschlüsseln kann, kann den Inhalt außerhalb des Clients kopieren. Das verhindert keine Richtlinie.
 - Löschen zieht keine Screenshots und keine bereits heruntergeladenen Dateien zurück.
 - Eine Meldung verlangt, dass jemand ausgewählte verschlüsselte Nachweise ausdrücklich teilt. Der Server überwacht keinen Klartext.
-- In der App stehen jetzt: Antwort mit Zitat und Sprung im geladenen Ausschnitt, verschlüsselte Reaktion, sichtbares Bearbeiten und Löschen, Weiterleiten von Text, Mehrfachauswahl, Suche in Raumnamen und im geladenen Ausschnitt, Anheften, Archiv, Stumm, Zustandszeile, optionale Lesebestätigung, Tippanzeige, Sprachaufnahme mit Sperre, Vorschau und Tempo, Bild mit Bildunterschrift und entfernter JPEG-Metadaten vor dem Verschlüsseln. Auf dem Emulator ausgeführt sind Bild, Sprache, Antwort, Reaktion, Bearbeiten, Löschen, beide Suchen, Anheften und die beiden Schalter. Nicht auf dem Gerät zu Ende geführt sind Archiv, Stumm, Weiterleiten und ein Sprung aus dem Bild. Gruppenadmins, Erwähnungen, gesteuerte Einladungen, Blockieren und Melden in der Oberfläche sind nicht gebaut.
+- In der App stehen jetzt: Antwort mit Zitat und Sprung im geladenen Ausschnitt, verschlüsselte Reaktion, sichtbares Bearbeiten und Löschen, Weiterleiten von Text ohne die Matrix-Antwortzeile, Mehrfachauswahl, Suche in Raumnamen und im geladenen Ausschnitt, Anheften, Archiv, Stumm, Zustandszeile, optionale Lesebestätigung, Tippanzeige, Sprachaufnahme mit Sperre, Vorschau und Tempo, Bild mit Bildunterschrift, Gruppe aus gewählten Kontakten, Einladen, Umbenennen, Verwaltung, Entfernen, Verlassen, Erwähnen, persönliches Blockieren, Melden nur mit angehakten Texten, ein gezeichneter Eltern-QR zum Abtippen und der Schalter, der den Inhalt auf dem Sperrbildschirm verbirgt. Auf dem Emulator ausgeführt sind Archiv, Stumm, Weiterleiten ohne die Matrix-Zeile, der Sprung zu einer Nachricht außerhalb des Bilds, das Anlegen einer verschlüsselten Gruppe, die Mitgliederliste, die Meldung mit leerem Haken und der Schalter. Eine Kamera zum Scannen, eine Push-Zustellung und die Elternansicht auf diesem Emulator-Konto sind nicht vorgeführt.
 - Später, nicht in der ersten Version: Umfragen, allgemeine Dateien, verschwindende Nachrichten, Anrufe.
 - Kontaktverifikation in Person soll später die üblichen Matrix-Verfahren QR, SAS und Cross-Signing benutzen. Bluetooth wäre nur eine kurzlebige Zuordnung einer Sitzung und kein Nähebeweis. Beides ist in diesem Meilenstein nicht gebaut. Es wird keine eigene Kryptografie erfunden.
 
@@ -46,7 +46,7 @@ Diese Punkte sind keine bestätigte Produktentscheidung. Sie sind die enge Ausle
 - Ein Medien-Upload, dessen erste Bytes wie JPEG, PNG, GIF, Ogg, ID3, PDF, RIFF, WebM oder MP4 aussehen, wird abgelehnt. Das ist eine Heuristik und kein Beweis, dass der Rest verschlüsselt ist.
 - Wenn die Richtliniendatenbank nicht erreichbar ist, wird abgelehnt.
 - Richtlinie und Synapse sind keine gemeinsame Transaktion. Nach einer Sperre versucht der Dienst, den gesperrten Kontakt aus Räumen zu entfernen, denen das Kind schon beigetreten ist, und wiederholt das. Eine gleichzeitige Einladung kann das Fenster trotzdem gewinnen. Der folgende Inhaltsversuch muss scheitern. Das Kind wird nicht entfernt.
-- Die Verknüpfung in Person ist ein einmaliger Code mit kurzer Gültigkeit, kein QR-Code.
+- Die Verknüpfung in Person ist ein einmaliger Code mit kurzer Gültigkeit. Die App zeigt ihn als QR und als Text. Die Kamera liest ihn nicht.
 - Der Bootstrap-Admin ist ein Betreiberkonto. Er kann Eltern- und Erwachsenenkonten anlegen, aber kein Kinderkonto, und er hat keine Schnittstelle zum Entschlüsseln.
 
 ## Offen

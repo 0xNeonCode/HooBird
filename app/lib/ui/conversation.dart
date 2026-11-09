@@ -10,10 +10,12 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:matrix/matrix.dart';
 import 'package:path/path.dart' as p;
+import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../audio_prep.dart';
 import '../media_prep.dart';
+import '../policy_api.dart';
 import '../security_label.dart';
 import '../session.dart';
 import '../voice_io.dart';
@@ -32,6 +34,8 @@ class ConversationPage extends StatefulWidget {
 class _ConversationPageState extends State<ConversationPage> {
   final _input = TextEditingController();
   final _anchors = <String, GlobalKey>{};
+  final _items = ItemScrollController();
+  List<String> _shownIds = const [];
   final _images = <String, Future<Uint8List?>>{};
   final _selected = <String>{};
   final _search = TextEditingController();
@@ -552,8 +556,9 @@ class _ConversationPageState extends State<ConversationPage> {
       final event = _eventById(id);
       if (event == null) continue;
       final display = _timeline == null ? event : event.getDisplayEvent(_timeline!);
-      if (display.messageType == MessageTypes.Text) {
-        texts.add(display.body);
+      if (display.messageType == MessageTypes.Text && !display.redacted) {
+        final text = _visibleText(display);
+        if (text.isNotEmpty) texts.add(text);
       } else {
         skipped += 1;
       }
@@ -572,13 +577,141 @@ class _ConversationPageState extends State<ConversationPage> {
     }
   }
 
+  Future<void> _mention() async {
+    final members = widget.room
+        .getParticipants()
+        .where((user) => user.id != widget.room.client.userID && user.membership == Membership.join)
+        .toList();
+    if (!mounted || members.isEmpty) return;
+    final id = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const ListTile(
+              title: Text('Erwähnen'),
+              subtitle: Text('Der Name steht im verschlüsselten Text. Der Server sieht ihn nicht im Klartext.'),
+            ),
+            for (final user in members)
+              ListTile(
+                title: Text(user.displayName ?? user.id),
+                subtitle: Text(user.id),
+                onTap: () => Navigator.pop(context, user.id),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (id == null) return;
+    final next = _input.text.isEmpty ? '$id ' : '${_input.text} $id ';
+    _input.value = TextEditingValue(text: next, selection: TextSelection.collapsed(offset: next.length));
+  }
+
+  Future<void> _report() async {
+    final timeline = _timeline;
+    final events = <Event>[];
+    final chosen = <String, bool>{};
+    for (final id in _selected) {
+      final event = _eventById(id);
+      if (event == null || event.redacted) continue;
+      final display = timeline == null ? event : event.getDisplayEvent(timeline);
+      if (display.messageType != MessageTypes.Text) continue;
+      events.add(display);
+      chosen[display.eventId] = false;
+    }
+    final note = TextEditingController();
+    if (!mounted) return;
+    final send = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          title: const Text('Melden'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Nichts ist vorausgewählt. Nur angehakte Texte werden gespeichert. Der Server liest die Ereignisse nicht selbst nach. Eltern sehen diese Meldung nicht.',
+                ),
+                for (final event in events)
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: chosen[event.eventId] ?? false,
+                    onChanged: (value) => setLocal(() => chosen[event.eventId] = value ?? false),
+                    title: Text(_visibleText(event), maxLines: 4, overflow: TextOverflow.ellipsis),
+                  ),
+                TextField(
+                  controller: note,
+                  decoration: const InputDecoration(labelText: 'Hinweis, ohne Nachrichtentext'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Abbrechen')),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Meldung senden')),
+          ],
+        ),
+      ),
+    );
+    final text = note.text.trim();
+    WidgetsBinding.instance.addPostFrameCallback((_) => note.dispose());
+    if (send != true) return;
+    final token = widget.controller.accessToken;
+    if (token == null) return;
+    try {
+      await widget.controller.api.fileReport(
+        token,
+        roomId: widget.room.id,
+        note: text,
+        items: [
+          for (final event in events)
+            {
+              'event_id': event.eventId,
+              'disclose': chosen[event.eventId] == true,
+              if (chosen[event.eventId] == true) 'body': _visibleText(event),
+            },
+        ],
+      );
+      if (!mounted) return;
+      setState(() {
+        _selected.clear();
+        _error = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Meldung gespeichert. Eltern sehen sie nicht.')),
+      );
+    } on PolicyException catch (exc) {
+      if (mounted) setState(() => _error = exc.message);
+    }
+  }
+
+  Future<void> _manage() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => _RoomTools(
+        room: widget.room,
+        controller: widget.controller,
+        onLeft: () {
+          if (mounted) Navigator.of(this.context).pop();
+        },
+      ),
+    );
+  }
+
   void _jump(String eventId) {
-    final context = _anchor(eventId).currentContext;
-    if (context == null) {
+    final index = _shownIds.indexOf(eventId);
+    if (index < 0 || !_items.isAttached) {
       setState(() => _error = 'Die ursprüngliche Nachricht ist in diesem Ausschnitt nicht geladen.');
       return;
     }
-    Scrollable.ensureVisible(context, alignment: 0.3, duration: const Duration(milliseconds: 200));
+    setState(() => _error = null);
+    _items.scrollTo(index: index, alignment: 0.3, duration: const Duration(milliseconds: 250));
   }
 
   Future<void> _actions(Event event) async {
@@ -673,6 +806,7 @@ class _ConversationPageState extends State<ConversationPage> {
             return display.body.toLowerCase().contains(query);
           }).toList();
     final typing = room.typingUsers.where((user) => user.id != room.client.userID).isNotEmpty;
+    _shownIds = [for (final event in events) event.eventId];
     return Scaffold(
       appBar: AppBar(
         title: Column(
@@ -683,12 +817,23 @@ class _ConversationPageState extends State<ConversationPage> {
           ],
         ),
         actions: [
-          if (_selected.isNotEmpty)
+          if (_selected.isNotEmpty) ...[
             IconButton(
               tooltip: 'Auswahl weiterleiten',
               onPressed: _forward,
               icon: const Icon(Icons.forward),
             ),
+            IconButton(
+              tooltip: 'Auswahl melden',
+              onPressed: _report,
+              icon: const Icon(Icons.flag_outlined),
+            ),
+          ],
+          IconButton(
+            tooltip: room.isDirectChat ? 'Kontakt blockieren' : 'Gruppe',
+            onPressed: _manage,
+            icon: Icon(room.isDirectChat ? Icons.block : Icons.group_outlined),
+          ),
           IconButton(
             tooltip: 'In geladenen Nachrichten suchen',
             onPressed: () => setState(() => _searching = !_searching),
@@ -720,7 +865,8 @@ class _ConversationPageState extends State<ConversationPage> {
           Expanded(
             child: timeline == null
                 ? const Center(child: CircularProgressIndicator())
-                : ListView.builder(
+                : ScrollablePositionedList.builder(
+                    itemScrollController: _items,
                     padding: const EdgeInsets.all(16),
                     itemCount: events.length,
                     itemBuilder: (context, index) {
@@ -826,7 +972,7 @@ class _ConversationPageState extends State<ConversationPage> {
                 dense: true,
                 title: Text(_editing != null ? 'Bearbeitung' : 'Antwort'),
                 subtitle: Text(
-                  (_editing ?? _reply)!.getDisplayEvent(timeline).body,
+                  _visibleText((_editing ?? _reply)!.getDisplayEvent(timeline)),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -878,6 +1024,11 @@ class _ConversationPageState extends State<ConversationPage> {
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
               child: Row(
                 children: [
+                  IconButton(
+                    tooltip: 'Mitglied erwähnen',
+                    onPressed: _sending || _editing != null ? null : _mention,
+                    icon: const Icon(Icons.alternate_email),
+                  ),
                   IconButton(
                     tooltip: 'Bild senden. GPS wird vor dem Senden entfernt. Text im Feld wird zur Beschriftung.',
                     onPressed: _sending || _editing != null ? null : _sendImage,
@@ -1099,6 +1250,205 @@ class _ImageBubble extends StatelessWidget {
           Text(caption),
         ],
       ],
+    );
+  }
+}
+
+class _RoomTools extends StatefulWidget {
+  const _RoomTools({required this.room, required this.controller, required this.onLeft});
+
+  final Room room;
+  final HoobirdController controller;
+  final VoidCallback onLeft;
+
+  @override
+  State<_RoomTools> createState() => _RoomToolsState();
+}
+
+class _RoomToolsState extends State<_RoomTools> {
+  final _name = TextEditingController();
+  final _invite = TextEditingController();
+  String? _notice;
+  var _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _name.text = widget.room.name;
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _invite.dispose();
+    super.dispose();
+  }
+
+  bool get _admin => widget.room.ownPowerLevel.level >= 50;
+
+  String _powerLabel(int level) {
+    if (level > 100) return 'Ersteller';
+    if (level >= 50) return 'Verwaltung';
+    return 'Stufe $level';
+  }
+
+  Future<void> _run(Future<void> Function() action) async {
+    setState(() {
+      _busy = true;
+      _notice = null;
+    });
+    try {
+      await action();
+      if (mounted) setState(() => _notice = null);
+    } on PolicyException catch (exc) {
+      if (mounted) setState(() => _notice = exc.message);
+    } catch (exc) {
+      if (mounted) setState(() => _notice = 'Abgelehnt: $exc');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<Set<String>?> _childAllowList() async {
+    final me = widget.controller.me;
+    if (me?['role'] != 'child') return null;
+    final token = widget.controller.accessToken;
+    final childId = me?['user_id']?.toString();
+    if (token == null || childId == null) return {};
+    final policy = await widget.controller.api.childPolicy(token, childId);
+    final contacts = policy['contacts'];
+    final allowed = <String>{};
+    if (contacts is List) {
+      for (final row in contacts.whereType<Map>()) {
+        if (row['effective'] == true) allowed.add('${row['user_id']}');
+      }
+    }
+    return allowed;
+  }
+
+  Future<void> _inviteByName() async {
+    final token = widget.controller.accessToken;
+    if (token == null) return;
+    final body = await widget.controller.api.search(token, _invite.text);
+    final results = body['results'];
+    if (results is! List || results.isEmpty) {
+      throw PolicyException(404, 'not_found', 'Nutzername nicht gefunden.');
+    }
+    final first = results.first;
+    if (first is! Map || '${first['username']}'.toLowerCase() != _invite.text.trim().toLowerCase()) {
+      throw PolicyException(404, 'not_found', 'Kein eindeutiger Nutzername.');
+    }
+    final userId = '${first['user_id']}';
+    final allowed = await _childAllowList();
+    if (allowed != null && !allowed.contains(userId)) {
+      throw PolicyException(403, 'not_approved', 'Ein Kinderkonto lädt nur freigegebene Kontakte ein.');
+    }
+    await widget.room.invite(userId);
+    _invite.clear();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final room = widget.room;
+    final members = room.getParticipants();
+    final me = room.client.userID;
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            ListTile(
+              title: Text(room.isDirectChat ? 'Kontakt' : 'Gruppe'),
+              subtitle: const Text(
+                'Neue Mitglieder bekommen keine alten Nachrichten. Der Server behält die Historie auf „joined“.',
+              ),
+            ),
+            if (!room.isDirectChat && _admin) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: TextField(
+                  controller: _name,
+                  decoration: const InputDecoration(labelText: 'Gruppenname'),
+                ),
+              ),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  onPressed: _busy ? null : () => _run(() => room.setName(_name.text.trim())),
+                  child: const Text('Umbenennen'),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: TextField(
+                  controller: _invite,
+                  decoration: const InputDecoration(labelText: 'Nutzername einladen'),
+                ),
+              ),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  onPressed: _busy ? null : () => _run(_inviteByName),
+                  child: const Text('Einladen'),
+                ),
+              ),
+            ],
+            for (final user in members)
+              ListTile(
+                title: Text(user.displayName ?? user.id),
+                subtitle: Text('${user.membership.name} · ${_powerLabel(user.powerLevel.level)}'),
+                trailing: user.id == me
+                    ? null
+                    : Wrap(
+                        spacing: 4,
+                        children: [
+                          if (!room.isDirectChat && _admin && user.membership == Membership.join)
+                            IconButton(
+                              tooltip: user.powerLevel.level >= 50 ? 'Verwaltung entziehen' : 'Verwaltung geben',
+                              onPressed: _busy
+                                  ? null
+                                  : () => _run(() => room.setPower(user.id, user.powerLevel.level >= 50 ? 0 : 50)),
+                              icon: Icon(user.powerLevel.level >= 50 ? Icons.shield_outlined : Icons.admin_panel_settings_outlined),
+                            ),
+                          if (!room.isDirectChat && _admin)
+                            IconButton(
+                              tooltip: 'Entfernen',
+                              onPressed: _busy ? null : () => _run(() => room.kick(user.id)),
+                              icon: const Icon(Icons.person_remove_outlined),
+                            ),
+                          IconButton(
+                            tooltip: 'Blockieren',
+                            onPressed: _busy
+                                ? null
+                                : () => _run(() async {
+                                    final token = widget.controller.accessToken;
+                                    if (token == null) return;
+                                    await widget.controller.api.blockPerson(token, user.id);
+                                  }),
+                            icon: const Icon(Icons.block),
+                          ),
+                        ],
+                      ),
+              ),
+            if (_notice != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(_notice!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              ),
+            ListTile(
+              title: const Text('Raum verlassen'),
+              onTap: _busy
+                  ? null
+                  : () => _run(() async {
+                      await room.leave();
+                      if (context.mounted) Navigator.pop(context);
+                      widget.onLeft();
+                    }),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -24,6 +24,7 @@ from hoobird_rules import (
     can_add_parent,
     can_lift_block,
     contact_allowed,
+    disclosed_report_items,
     fold_username,
     valid_device_id,
     valid_ed25519,
@@ -82,6 +83,22 @@ class ContactBody(BaseModel):
 class DeviceBody(BaseModel):
     device_id: str
     ed25519: str
+
+
+class PersonalBlockBody(BaseModel):
+    user_id: str
+
+
+class ReportItemBody(BaseModel):
+    event_id: str
+    disclose: bool = False
+    body: str | None = None
+
+
+class ReportBody(BaseModel):
+    room_id: str
+    note: str | None = None
+    items: list[ReportItemBody] = Field(default_factory=list)
 
 
 def _settings() -> dict:
@@ -455,6 +472,8 @@ def create_link_code(child_id: str, body: LinkCodeBody, request: Request):
         "proves": "short_lived_shared_secret",
         "does_not_prove": ["guardianship", "proximity", "age"],
         "qr_implemented": False,
+        "qr_display": True,
+        "qr_camera_scan": False,
     }
 
 
@@ -615,6 +634,67 @@ def _facts(store: PolicyStore, child_id: str, contact_user_id: str) -> ContactFa
         blocked_by=frozenset(store.blocks_for(child_id, contact_user_id)),
         approved_by=approvals.get(contact_user_id),
     )
+
+
+@app.post("/_hoobird/v1/blocks")
+def block_person(body: PersonalBlockBody, request: Request):
+    actor = caller(request)
+    store = store_of(request)
+    target = store.get_account(body.user_id)
+    if target is None or target["user_id"] == actor["user_id"]:
+        _fail(404, "not_found", "Dieses Konto kann nicht blockiert werden.")
+    store.add_personal_block(actor["user_id"], target["user_id"])
+    return {
+        "blocked_user_id": target["user_id"],
+        "messages_included": False,
+        "enforced_on": "membership_and_encrypted_send",
+    }
+
+
+@app.delete("/_hoobird/v1/blocks/{user_id}")
+def unblock_person(user_id: str, request: Request):
+    actor = caller(request)
+    removed = store_of(request).remove_personal_block(actor["user_id"], user_id)
+    if not removed:
+        _fail(404, "not_blocked", "Diese Sperre ist nicht gespeichert.")
+    return {"blocked_user_id": user_id, "removed": True}
+
+
+@app.get("/_hoobird/v1/blocks")
+def list_blocks(request: Request):
+    actor = caller(request)
+    return {
+        "blocked_user_ids": store_of(request).list_personal_blocks(actor["user_id"]),
+        "messages_included": False,
+    }
+
+
+@app.post("/_hoobird/v1/reports")
+def file_report(body: ReportBody, request: Request):
+    actor = caller(request)
+    room_id = body.room_id.strip()
+    if not room_id.startswith("!") or len(room_id) > 255 or "\x00" in room_id:
+        _fail(400, "bad_room", "Die Raumkennung ist ungültig.")
+    note = None
+    if body.note is not None:
+        note = body.note.strip()
+        if len(note) > 500 or "\x00" in note:
+            _fail(400, "bad_note", "Der Hinweis ist zu lang.")
+        if not note:
+            note = None
+    items = disclosed_report_items([item.model_dump() for item in body.items])
+    if not items and note is None:
+        _fail(400, "empty_report", "Die Meldung enthält weder ein Ereignis noch einen Hinweis.")
+    report_id = store_of(request).save_report(actor["user_id"], room_id, note, items)
+    disclosed = sum(1 for item in items if item["body"] is not None)
+    return {
+        "report_id": report_id,
+        "event_count": len(items),
+        "disclosed_count": disclosed,
+        "bodies_echoed": False,
+        "visible_to_parents": False,
+        "server_did_not_fetch_events": True,
+    }
 
 
 def _policy_body(store: PolicyStore, child: dict) -> dict:

@@ -66,6 +66,7 @@ class PolicyView:
     parents: dict[str, set[str]] = field(default_factory=dict)
     approvals: dict[tuple[str, str], str] = field(default_factory=dict)
     blocks: dict[tuple[str, str], set[str]] = field(default_factory=dict)
+    personal_blocks: set[tuple[str, str]] = field(default_factory=set)
 
     def children_in(self, user_ids: set[str]) -> set[str]:
         return {user_id for user_id in user_ids if self.roles.get(user_id) == "child"}
@@ -150,7 +151,49 @@ def unsafe_pairs(view: PolicyView, memberships: dict[str, str]) -> list[tuple[st
                 continue
             if not contact_allowed(view.facts(child_id, other_id)):
                 problems.append((child_id, other_id))
+    for blocker, blocked in sorted(view.personal_blocks):
+        if blocker in members and blocked in members:
+            problems.append((blocker, blocked))
     return problems
+
+
+def membership_problem(view: PolicyView, pair: tuple[str, str]) -> str:
+    """Name the first reason a pair cannot share a room."""
+
+    left, right = pair
+    if (left, right) in view.personal_blocks or (right, left) in view.personal_blocks:
+        return f"personal_block:{left}:{right}"
+    return f"unapproved_pair:{left}:{right}"
+
+
+def disclosed_report_items(items: object, *, limit: int = 20) -> list[dict]:
+    """Keep a message body only when the reporter explicitly opted in.
+
+    The server does not look the event up. A missing flag, a false flag, or a
+    body that was not a short string is stored without text.
+    """
+
+    if not isinstance(items, list):
+        return []
+    kept: list[dict] = []
+    for item in items[:limit]:
+        if not isinstance(item, dict):
+            continue
+        event_id = item.get("event_id")
+        if not isinstance(event_id, str) or not event_id or len(event_id) > 255 or "\x00" in event_id:
+            continue
+        body = item.get("body")
+        store_body = None
+        if (
+            item.get("disclose") is True
+            and isinstance(body, str)
+            and body.strip()
+            and len(body) <= 2000
+            and "\x00" not in body
+        ):
+            store_body = body
+        kept.append({"event_id": event_id, "body": store_body})
+    return kept
 
 
 def membership_allowed(
@@ -182,8 +225,7 @@ def membership_allowed(
     resulting[state_key] = membership
     problems = unsafe_pairs(view, resulting)
     if problems:
-        child_id, other_id = problems[0]
-        return False, f"unapproved_pair:{child_id}:{other_id}"
+        return False, membership_problem(view, problems[0])
     return True, "safe_membership"
 
 
@@ -213,8 +255,7 @@ def content_event_allowed(
         return False, "missing_session_id"
     problems = unsafe_pairs(view, current)
     if problems:
-        child_id, other_id = problems[0]
-        return False, f"unapproved_pair:{child_id}:{other_id}"
+        return False, membership_problem(view, problems[0])
     return True, "encrypted_ok"
 
 
