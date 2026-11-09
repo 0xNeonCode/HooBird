@@ -85,8 +85,10 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
-          title: const Text('Lesebestätigungen senden'),
-          subtitle: const Text('Aus ist die Voreinstellung. Dann erfährt der Absender nicht, dass eine Nachricht hier geöffnet wurde.'),
+          title: const Text('Lesebestätigungen'),
+          subtitle: const Text(
+            'Aus ist die Voreinstellung. Dann sendet HooBird keine öffentliche Lesebestätigung und zeigt auch nicht, ob andere gelesen haben. Eine private Lesemarke für die eigenen Geräte bleibt.',
+          ),
           value: controller.sendReceipts,
           onChanged: (value) => controller.setSendReceipts(value),
         ),
@@ -94,7 +96,7 @@ class _SettingsPageState extends State<SettingsPage> {
           contentPadding: EdgeInsets.zero,
           title: const Text('Inhalt auf dem Sperrbildschirm verbergen'),
           subtitle: const Text(
-            'Voreinstellung an. Der Android-Kanal merkt sich das. Eine Push-Zustellung gibt es in dieser Fassung nicht, deshalb erscheint auch keine Vorschau.',
+            'Voreinstellung an. Der Android-Kanal merkt sich das. Eine Push-Zustellung gibt es in dieser Fassung nicht, deshalb erscheint auch keine Vorschau. Bilder bleiben im Chat sichtbar, Speichern und Teilen sind dann aus.',
           ),
           value: controller.hideNotificationContent,
           onChanged: (value) => controller.setHideNotificationContent(value),

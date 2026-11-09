@@ -43,4 +43,12 @@ void main() {
       throwsA(isA<AudioPrepException>()),
     );
   });
+
+  test('Zu kurze, leere oder stumme Aufnahmen werden nicht gesendet', () {
+    expect(voiceTakeRejection(byteLength: 400, elapsedMs: 400, peak: 0.4), 'too_short');
+    expect(voiceTakeRejection(byteLength: 8, elapsedMs: 1500, peak: 0.4), 'empty');
+    expect(voiceTakeRejection(byteLength: 400, elapsedMs: 1500, peak: 0), 'silent');
+    expect(voiceTakeRejection(byteLength: 400, elapsedMs: 1500, peak: 0.2), isNull);
+    expect(voiceMinimumMs, 1000);
+  });
 }

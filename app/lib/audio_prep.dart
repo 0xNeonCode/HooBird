@@ -87,6 +87,20 @@ int _u64(Uint8List data, int offset) {
   return value;
 }
 
+/// Under a second is a slip. An empty file or a peak of zero is not a message.
+const voiceMinimumMs = 1000;
+
+String? voiceTakeRejection({
+  required int byteLength,
+  required int elapsedMs,
+  required double peak,
+}) {
+  if (elapsedMs < voiceMinimumMs) return 'too_short';
+  if (byteLength < 12) return 'empty';
+  if (peak <= 0) return 'silent';
+  return null;
+}
+
 Uint8List _u32bytes(int value) {
   return Uint8List.fromList([
     (value >> 24) & 0xFF,
