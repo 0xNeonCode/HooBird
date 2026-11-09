@@ -61,7 +61,9 @@ class _ContactsPageState extends State<ContactsPage> {
       final room = client.getRoomById(roomId);
       if (!mounted || room == null) return;
       await Navigator.of(context).push(
-        MaterialPageRoute<void>(builder: (_) => ConversationPage(room: room)),
+        MaterialPageRoute<void>(
+          builder: (_) => ConversationPage(room: room, controller: widget.controller),
+        ),
       );
     } catch (exc) {
       _error = 'Unterhaltung mit $username nicht geöffnet: $exc';

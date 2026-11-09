@@ -68,6 +68,21 @@ class _SettingsPageState extends State<SettingsPage> {
           selected: {controller.themeMode},
           onSelectionChanged: (value) => controller.setTheme(value.first),
         ),
+        const SizedBox(height: 12),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Tippen anzeigen und senden'),
+          subtitle: const Text('Andere sehen „schreibt…“, solange hier Text im Feld steht. Aus blendet auch deren Hinweis aus.'),
+          value: controller.sendTyping,
+          onChanged: (value) => controller.setSendTyping(value),
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Lesebestätigungen senden'),
+          subtitle: const Text('Aus ist die Voreinstellung. Dann erfährt der Absender nicht, dass eine Nachricht hier geöffnet wurde.'),
+          value: controller.sendReceipts,
+          onChanged: (value) => controller.setSendReceipts(value),
+        ),
         const SizedBox(height: 16),
         FilledButton(
           onPressed: _busy ? null : () => _run(controller.ensureRecoveryKey),

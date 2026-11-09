@@ -46,6 +46,8 @@ class HoobirdController extends ChangeNotifier {
     deviceId = prefs.getString('device_id') ?? _newDeviceId();
     policyUrl = prefs.getString('policy_url') ?? defaultPolicyUrl;
     homeserver = prefs.getString('homeserver') ?? defaultHomeserver;
+    sendTyping = prefs.getBool('send_typing') ?? true;
+    sendReceipts = prefs.getBool('send_receipts') ?? false;
   }
 
   final SharedPreferences prefs;
@@ -55,6 +57,8 @@ class HoobirdController extends ChangeNotifier {
   late String deviceId;
   late String policyUrl;
   late String homeserver;
+  late bool sendTyping;
+  late bool sendReceipts;
   bool busy = false;
   String? error;
   Map<String, dynamic>? me;
@@ -188,6 +192,18 @@ class HoobirdController extends ChangeNotifier {
       busy = false;
       notifyListeners();
     }
+  }
+
+  Future<void> setSendTyping(bool value) async {
+    sendTyping = value;
+    await prefs.setBool('send_typing', value);
+    notifyListeners();
+  }
+
+  Future<void> setSendReceipts(bool value) async {
+    sendReceipts = value;
+    await prefs.setBool('send_receipts', value);
+    notifyListeners();
   }
 
   Future<void> setTheme(ThemeMode mode) async {

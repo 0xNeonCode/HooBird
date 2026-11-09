@@ -11,7 +11,7 @@ Diese Punkte sind am Prototyp gemessen oder im Code sichtbar. Sie bleiben absich
 - Mitgliedschaft und Sperre sind keine gemeinsame Transaktion mit Synapse. Nach einer Sperre versucht der Dienst, den gesperrten Kontakt aus den Räumen zu entfernen, denen das Kind schon beigetreten ist, und wiederholt das. Einladung und Sperre können sich trotzdem kurz überholen. Inhalt wird abgelehnt, sobald die Sperre sichtbar ist. Der Dienst entfernt das Kind nicht aus dem Raum.
 - Ein später freigegebenes Mitglied sieht die ältere Historie nicht. Ein späteres Mitglied ohne Freigabe wird abgelehnt.
 - Die Medienprüfung liest den Anfang der Datei. Zufällige Bytes können durchgehen. Ein verschlüsselter Upload versteckt Metadaten vor dem Server. EXIF wird nur vor der Verschlüsselung auf der Client-Seite entfernt.
-- `m.room.encrypted` wird auf die Megolm-Form geprüft, nicht darauf, dass eine Implementierung den Ciphertext korrekt erzeugt hat.
+- `m.room.encrypted` wird auf die Megolm-Form geprüft, nicht darauf, dass eine Implementierung den Ciphertext korrekt erzeugt hat. Klartext-`m.reaction` wird abgelehnt. Die App verschlüsselt die Reaktion mit der bestehenden Megolm-Sitzung und legt das Emoji nicht in `m.relates_to` auf dem Draht ab. Der Server sieht, dass ein verschlüsseltes Ereignis kam, nicht welches Emoji es war.
 - `check_event_allowed` ist in Synapse experimentell und wird trotzdem benutzt. Fehlt der Raumzustand, lässt das Modul Mitgliedschaftsereignisse zu und schreibt ein Protokoll.
 - `user_may_join_room` gilt nicht für den Admin-Join und nicht für das Anlegen des Raums. `check_login_for_spam` läuft beim Login, nicht bei der Registrierung.
 - Das Android-Manifest erlaubt für den lokalen Prototyp Klartext-HTTP. `bcrypt_rounds` ist 4.

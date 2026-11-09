@@ -36,6 +36,17 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    packaging {
+        jniLibs {
+            // Debug split APKs otherwise store libflutter.so uncompressed and also
+            // pick up the Khronos Vulkan validation layer. HooBird does not call
+            // that layer. Compressing the JNI libraries keeps the ABI split
+            // produced by the build small enough to keep.
+            useLegacyPackaging = true
+            excludes += setOf("**/libVkLayer_khronos_validation.so")
+        }
+    }
 }
 
 kotlin {
