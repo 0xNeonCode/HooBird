@@ -10,7 +10,7 @@ Daraus folgt für die weitergebbare Kombination, als Lesart der vorliegenden Hin
 
 ## Flutter- und Dart-SDK
 
-Flutter-Revision in `app/.metadata`: `c197ca5199e9ee5661e865596c9c07294dfab51c`, Kanal stable. Die Datei `/opt/flutter/LICENSE` beginnt mit „Copyright 2014 The Flutter Authors“ und ist die BSD-3-Clause-Lizenz. Die von `flutter create` erzeugten Gerüste unter `app/android`, `app/linux` und `app/analysis_options.yaml` stammen aus diesem Werkzeug. Änderungen daran (Anwendungs-ID, `compileSdk` 36, Klartext-HTTP im Manifest) sind Anpassungen dieses Prototyps. Die BSD-Hinweise des unveränderten Gerüsts bleiben.
+Flutter-Revision in `app/.metadata`: `c197ca5199e9ee5661e865596c9c07294dfab51c`, Kanal stable. Die Datei `/opt/flutter/LICENSE` beginnt mit „Copyright 2014 The Flutter Authors“ und ist die BSD-3-Clause-Lizenz. Die von `flutter create` erzeugten Gerüste unter `app/android`, `app/linux` und `app/analysis_options.yaml` stammen aus diesem Werkzeug. Änderungen daran (Anwendungs-ID, `compileSdk` 36, Klartext nur für Loopback) sind Anpassungen dieses Prototyps. Die BSD-Hinweise des unveränderten Gerüsts bleiben.
 
 Das mit dieser Flutter-Revision ausgelieferte Dart-SDK meldet `Dart SDK version: 3.13.7`. Die Datei `/opt/flutter/bin/cache/dart-sdk/LICENSE` beginnt mit „Copyright 2012, the Dart project authors.“ und ist eine BSD-Lizenz mit der Namensklausel für Google LLC. Eine davon getrennte NOTICE-Datei wurde nicht gefunden.
 

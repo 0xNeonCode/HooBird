@@ -115,12 +115,18 @@ class _GatePageState extends State<GatePage> {
             if (_showEndpoints) ...[
               TextField(
                 controller: _policy,
-                decoration: const InputDecoration(labelText: 'Policy-Adresse'),
+                decoration: const InputDecoration(
+                  labelText: 'Policy-Adresse',
+                  helperText: 'HTTPS. Klartext nur für 127.0.0.1 und localhost.',
+                ),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: _server,
-                decoration: const InputDecoration(labelText: 'Homeserver'),
+                decoration: const InputDecoration(
+                  labelText: 'Homeserver',
+                  helperText: 'HTTPS. Klartext nur für 127.0.0.1 und localhost.',
+                ),
               ),
             ],
             const SizedBox(height: 16),

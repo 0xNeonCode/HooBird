@@ -15,7 +15,7 @@ Diese Punkte sind am Prototyp gemessen oder im Code sichtbar. Sie bleiben absich
 - `m.room.encrypted` wird auf die Megolm-Form geprüft, nicht darauf, dass eine Implementierung den Ciphertext korrekt erzeugt hat. Klartext-`m.reaction` wird abgelehnt. Die App verschlüsselt die Reaktion mit der bestehenden Megolm-Sitzung und legt das Emoji nicht in `m.relates_to` auf dem Draht ab. Der Server sieht, dass ein verschlüsseltes Ereignis kam, nicht welches Emoji es war.
 - `check_event_allowed` ist in Synapse experimentell und wird trotzdem benutzt. Fehlt der Raumzustand, lässt das Modul Mitgliedschaftsereignisse zu und schreibt ein Protokoll.
 - `user_may_join_room` gilt nicht für den Admin-Join und nicht für das Anlegen des Raums. `check_login_for_spam` läuft beim Login, nicht bei der Registrierung.
-- Das Android-Manifest erlaubt für den lokalen Prototyp Klartext-HTTP. `bcrypt_rounds` ist 4.
+- Klartext-HTTP ist auf `127.0.0.1` und `localhost` beschränkt. Jede andere Adresse braucht HTTPS. Für `hoobird.0xneoncode.de` gibt es keine Klartext-Ausnahme. `bcrypt_rounds` ist 4.
 - Das Debug-APK dieses Meilensteins ist testsigniert und nicht für eine Veröffentlichung. Ein Android-Emulator mit KVM ist in dieser Cloud-Umgebung gestartet. Ein physisches Gerät und ein externes Audit gibt es nicht.
 
 ## Meldung

@@ -54,7 +54,7 @@ Beispielkonten, nachdem `python scripts/seed_demo.py` durchgelaufen ist. Die Pas
 
 Oma und Linus sind mit Jonas verknüpft. Mara ist für Jonas freigegeben. Fremder ist es nicht. Es gibt einen verschlüsselten Raum „Familie“ zwischen Oma und Mara. Die Linux-Sitzung von Mara auf einem neuen Gerät sieht die alten Ereignisse nicht im Klartext. Das ist das erwartete Bild, kein Fehler der Oberfläche.
 
-Die App merkt sich Homeserver `http://127.0.0.1:18008` und Policy `http://127.0.0.1:18018`. Auf einem Telefon ist `127.0.0.1` das Telefon, nicht der Rechner mit Synapse. Dafür die beiden Felder unter „Server anzeigen“ auf die erreichbare Adresse des Rechners stellen. Das Android-Manifest erlaubt für diesen Prototyp Klartext-HTTP. Ein späterer Server muss HTTPS benutzen, und diese Erlaubnis muss dann weg.
+Ohne `--dart-define` merkt sich die App Homeserver `http://127.0.0.1:18008` und Policy `http://127.0.0.1:18018`. Klartext-HTTP gilt nur für `127.0.0.1`, `localhost` und `::1`. Eine andere Adresse muss HTTPS sein. Die Pfade für `https://hoobird.0xneoncode.de` stehen in `docs/test-server.md`.
 
 ## Wiederherstellung der Wegwerfdaten
 
@@ -70,7 +70,7 @@ Nicht gelaufen, weil kein SDK, kein Emulator und kein Gerät vorhanden waren. We
 
 1. Android-SDK mit `compileSdk` 36 und ein NDK, das Flutter 3.47 verlangt. `flutter doctor -v` nennt die Version.
 2. `cd app && flutter build apk --debug`. Der erste Build kompiliert Vodozemac. Dafür braucht die Maschine Rust. cargokit kann rustup nachziehen. Das dauert und ist hier nicht gemessen.
-3. APK installieren. In der App den Homeserver und die Policy-Adresse auf den Rechner setzen, nicht auf `127.0.0.1`.
+3. APK installieren. Ein Build ohne `--dart-define` spricht `127.0.0.1` an. Ein Build für den Testserver trägt die HTTPS-Adressen aus `docs/test-server.md`. Klartext zu einer anderen Adresse lehnt die App ab.
 4. Als Mara anmelden. Der Raum Familie muss erscheinen. Alte Nachrichten dürfen auf diesem neuen Gerät nicht lesbar sein, solange kein Sicherungsschlüssel eingegeben wird. Die Zeile muss „Identität nicht verifiziert“ sagen, bis wirklich eine Matrix-Verifikation gelaufen ist.
 5. Eine neue Textzeile senden. In `event_json` darf der Satz nicht stehen.
 6. Als Jonas nur mit der Gerätekennung `JONASDEMO01` anmelden. Eine zweite, nicht freigegebene Kennung muss von der Policy mit 403 abgewiesen werden.

@@ -15,11 +15,24 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:vodozemac/vodozemac.dart' as olm;
 
+import 'endpoints.dart';
 import 'pickle_key.dart';
 import 'policy_api.dart';
 
-const defaultPolicyUrl = 'http://127.0.0.1:18018';
-const defaultHomeserver = 'http://127.0.0.1:18008';
+/// A binary built for a non-loopback server drops a saved session that still
+/// points at another address. It does not call that old server.
+Future<void> dropStoredSessionWhenBuildServerDiffers(SharedPreferences prefs) async {
+  if (!buildEndpointsPinned) return;
+  final stored = prefs.getString('homeserver');
+  await prefs.setString('homeserver', buildHomeserver);
+  await prefs.setString('policy_url', buildPolicyUrl);
+  if (stored == null || stored == buildHomeserver) return;
+  final directory = await getApplicationSupportDirectory();
+  for (final name in ['hoobird.sqlite', 'hoobird.sqlite-wal', 'hoobird.sqlite-shm']) {
+    final file = File(p.join(directory.path, name));
+    if (file.existsSync()) file.deleteSync();
+  }
+}
 
 Future<void> prepareDesktopDatabase() async {
   if (Platform.isLinux || Platform.isWindows) {
@@ -45,8 +58,8 @@ class HoobirdController extends ChangeNotifier {
   }) {
     themeMode = _readTheme(prefs.getString('theme'));
     deviceId = prefs.getString('device_id') ?? _newDeviceId();
-    policyUrl = prefs.getString('policy_url') ?? defaultPolicyUrl;
-    homeserver = prefs.getString('homeserver') ?? defaultHomeserver;
+    policyUrl = resolvedEndpoint(prefs.getString('policy_url'), buildPolicyUrl);
+    homeserver = resolvedEndpoint(prefs.getString('homeserver'), buildHomeserver);
     sendTyping = prefs.getBool('send_typing') ?? true;
     sendReceipts = prefs.getBool('send_receipts') ?? false;
     hideNotificationContent = prefs.getBool('hide_notification_content') ?? true;
@@ -87,6 +100,10 @@ class HoobirdController extends ChangeNotifier {
     error = null;
     notifyListeners();
     try {
+      final rejected = endpointRejection(policyUrl) ?? endpointRejection(homeserver);
+      if (rejected != null) {
+        throw PolicyException(0, 'endpoint_rejected', rejected);
+      }
       await prefs.setString('device_id', deviceId);
       await prefs.setString('policy_url', policyUrl);
       await prefs.setString('homeserver', homeserver);
@@ -98,7 +115,8 @@ class HoobirdController extends ChangeNotifier {
         throw PolicyException(500, 'bad_login', 'Die Anmeldung lieferte keine Sitzung.');
       }
       final server = Uri.parse(homeserver);
-      if (matrix.homeserver == null) {
+      final current = matrix.homeserver;
+      if (current == null || !sameEndpoint(current.toString(), homeserver)) {
         await matrix.checkHomeserver(server);
       }
       if (!matrix.isLogged()) {

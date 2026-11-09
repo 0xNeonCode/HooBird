@@ -4,33 +4,26 @@ Kurze Liste für ein physisches Xiaomi (arm64). Das ist ein Debug-Stand, kein St
 
 ## Welche App, welcher Server
 
-Die arm64-Debug-APK liegt bei den Übertragungsdateien dieses Laufs. Der Dateiname und der SHA-256 stehen in `docs/android-v1-milestone.md` unter dem vierten Lauf. Die APK ist debug-signiert. Es ist kein Produktionsschlüssel.
+Die Datei für das Xiaomi heißt `hoobird-arm64-v8a-debug-testserver.apk`. Sie ist debug-signiert. Es ist kein Produktionsschlüssel und keine Store-Fassung. SHA-256 `a08b39779b488157f9cdbb0468c9e11d673a56280f142e66f6139ef654fc9812`, 56152760 Bytes. Dieselbe Zeile steht in `docs/android-v1-milestone.md` unter dem fünften Lauf. Die älteren Loopback-APKs bleiben die Dateien ohne `testserver` im Namen. Die sprechen weiter `127.0.0.1` an und erreichen das Telefon im WLAN nicht.
 
-Die App spricht fest `127.0.0.1` auf dem Telefon an: Policy-Port `18018`, Homeserver-Port `18008`. Klartext-HTTP, nur für diesen Prototyp.
+Diese Testserver-APK ist zur Bauzeit festgelegt auf:
 
-Im Emulator klappt das, weil `adb reverse` diese beiden Ports auf den Rechner legt, auf dem der lokale Teststack läuft. Der Stack hört nur auf dem Loopback dieses Rechners.
+- Homeserver `https://hoobird.0xneoncode.de`
+- Policy `https://hoobird.0xneoncode.de/policy`
 
-Ein Xiaomi im WLAN erreicht mit `127.0.0.1` nur sich selbst. Es erreicht den Testrechner nicht und den VServer nicht. In der APK steht keine Adresse des VServers und kein Zugang dazu.
+Die Zuordnung der Pfade steht in `docs/test-server.md`. Klartext zu diesem Namen ist aus. Das Telefon braucht normales WLAN oder Mobilfunk und ein Zertifikat, dem Android vertraut. `adb reverse` ist für diese Fassung nicht nötig. Ein früherer Debug-Stand derselben App (`dev.hoobird.spike.hoobird`) kann eine gespeicherte Loopback-Sitzung haben. Diese Fassung verwirft eine gespeicherte Adresse, die nicht die Bauzeit-Adresse ist, und legt die lokale Datenbank dafür weg. Sie ruft den alten Server dabei nicht an. Trotzdem die alte App vorher deinstallieren, damit keine alte Sitzung im Weg steht.
 
-Ohne eine extra Freigabe kann das Telefon die App installieren und öffnen. Die Anmeldung findet den Testserver nicht. Sprache, Bild, Reaktion und Gruppen lassen sich dann nicht gegen den Server prüfen.
-
-Sicherste Option, die eine Freigabe braucht und den VServer nicht anfasst: das Telefon per USB an einen Rechner hängen, auf dem der lokale Teststack schon läuft, und dort nur
-
-`adb reverse tcp:18008 tcp:18008`
-
-`adb reverse tcp:18018 tcp:18018`
-
-ausführen. Danach meint `127.0.0.1` auf dem Telefon den Stack auf diesem Rechner. Nichts davon wird hier ohne Freigabe eingerichtet. Der VServer bleibt unberührt.
+Konten stehen nicht in dieser Datei und nicht in der APK. Sie werden getrennt ausgehändigt. Keine Passwörter hier eintragen.
 
 ## Installieren
 
-1. Unbekannte Quellen für die gewählte Datei-App erlauben, die arm64-Debug-APK öffnen und installieren.
-2. Die alte Installation derselben Debug-Kennung darf ersetzt werden. Das ist nicht die spätere Store-App.
-3. Nach dem Öffnen: Startbild, Anmeldung. Ohne den USB-Tunnel endet die Anmeldung damit, dass der lokale Testserver nicht erreichbar ist. Das ist dann der erwartete Stand, kein Fehler der Anmeldedaten.
+1. Eine schon installierte HooBird-Debug-App deinstallieren.
+2. Unbekannte Quellen für die gewählte Datei-App erlauben, `hoobird-arm64-v8a-debug-testserver.apk` öffnen und installieren.
+3. Startbild, Anmeldung mit dem getrennt erhaltenen Konto. Unter „Server anzeigen“ müssen die beiden HTTPS-Adressen oben stehen. Sie nicht auf `http://` oder `127.0.0.1` ändern.
 
-## Wenn der Tunnel freigegeben und aktiv ist
+## Wenn die Anmeldung den Server erreicht
 
-Synthetische Konten, keine echten Personen.
+Synthetische Konten, keine echten Personen. Die Konten kommen von außen, nicht aus diesem Dokument.
 
 - Zwei Erwachsenenkonten anlegen oder vorhandene Testkonten nutzen. Direktchat öffnen. Die Zeile muss „Verschlüsselt“ zeigen. „Identität nicht verifiziert“ ist erwartbar. Es gibt keinen QR- oder Bluetooth-Abgleich der Geräte.
 - Text senden. Beim Gegenüber muss er ankommen und bei dir „Synchronisiert“ werden.

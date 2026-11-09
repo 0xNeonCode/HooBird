@@ -87,3 +87,14 @@ Dieselbe Loopback-Umgebung, nach dem dritten Lauf. Die Zahlen ersetzen die früh
 - Auf dem Gerät nicht ausgeführt: die Elternansicht, weil das angemeldete Konto erwachsen ist. Der QR und die Freigaben stehen im Code und in den Serverläufen. Die Kamera liest den QR nicht. Eine gesendete Erwähnung, Umbenennen, Verwaltung geben, Entfernen und Verlassen wurden nicht angetippt. Ein physisches Xiaomi wurde nicht benutzt. Die Debug-APK spricht nur 127.0.0.1 auf dem Gerät an. Ohne `adb reverse` erreicht ein Telefon im WLAN diesen Stack nicht. Der VServer wurde nicht angefasst.
 
 Ein bestandener Lauf ersetzt kein externes Audit. Der Homeserver-Admin kann weiter ein Login-Token minten. Öffentliche Geräteschlüssel bleiben über die Matrix-Abfrage lesbar. Der Eltern-QR beweist keine Sorgeberechtigung.
+
+### Fünfter Lauf
+
+Kein Emulator. Die App bekommt Homeserver und Policy zur Bauzeit. Ohne `--dart-define` bleiben `http://127.0.0.1:18008` und `http://127.0.0.1:18018`. Klartext-HTTP gilt nur für `127.0.0.1` und `localhost`. `hoobird.0xneoncode.de` hat keine Klartext-Ausnahme. Die Pfade stehen in `docs/test-server.md`.
+
+- `flutter analyze`: keine Beanstandungen.
+- `flutter test test/widget_test.dart test/endpoints_test.dart test/media_prep_test.dart test/audio_prep_test.dart`: 9 bestanden, danach die Widget- und Adressentests noch einmal 5 bestanden. Ein Build ohne Define bleibt auf Loopback. `http://hoobird.0xneoncode.de` und eine Adresse mit Zugangsdaten werden abgelehnt. Das Präfix `/policy` wird vor `/_hoobird/v1/...` gesetzt.
+- `python3 -m pytest`: 22 bestanden, 1 übersprungen, 11 Fehler, 2 fehlgeschlagen, 0,39 s. Die Fehler sind `Connection refused` auf `127.0.0.1:18018`. Auf dieser Maschine läuft der lokale Compose-Stack nicht. Die zwei Fehlschläge sind `runtime/localhost.env` und der lokale Signierschlüssel, beide nicht im Git. Der VServer wurde nicht angesprochen. Die reinen Richtlinientests in derselben Sammlung sind bestanden.
+- `flutter build apk --debug --target-platform android-arm64` mit `HOOBIRD_HOMESERVER=https://hoobird.0xneoncode.de` und `HOOBIRD_POLICY_BASE=https://hoobird.0xneoncode.de/policy`. Debug-signiert, kein Produktionsschlüssel. `hoobird-arm64-v8a-debug-testserver.apk`, 56152760 Bytes, SHA-256 `a08b39779b488157f9cdbb0468c9e11d673a56280f142e66f6139ef654fc9812`. Die Flutter-Engine darin ist arm64-v8a. Im Kernel stehen die beiden HTTPS-Adressen. Kein Passwort.
+
+Ein Telefon im WLAN erreicht diese Adressen, wenn der Testserver sie so ausliefert und das Zertifikat von Android akzeptiert wird. Diese Fassung wurde gegen diesen Server nicht ausgeführt. Der Server wurde nicht angefasst.

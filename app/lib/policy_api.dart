@@ -5,6 +5,8 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import 'endpoints.dart';
+
 class PolicyException implements Exception {
   PolicyException(this.status, this.code, this.message);
 
@@ -17,9 +19,17 @@ class PolicyException implements Exception {
 }
 
 class PolicyApi {
-  PolicyApi(String baseUrl) : base = Uri.parse(baseUrl.replaceAll(RegExp(r'/+$'), ''));
+  PolicyApi(String baseUrl) : base = _checkedBase(baseUrl);
 
   final Uri base;
+
+  static Uri _checkedBase(String baseUrl) {
+    final problem = endpointRejection(baseUrl);
+    if (problem != null) {
+      throw PolicyException(0, 'endpoint_rejected', problem);
+    }
+    return Uri.parse(baseUrl.trim().replaceAll(RegExp(r'/+$'), ''));
+  }
 
   Future<Map<String, dynamic>> login(
     String username,
@@ -183,10 +193,7 @@ class PolicyApi {
     Map<String, String>? query,
     Map<String, dynamic>? body,
   }) async {
-    final uri = base.replace(
-      path: '${base.path}$path',
-      queryParameters: query,
-    );
+    final uri = policyRequestUri(base.toString(), path, query: query);
     final headers = <String, String>{'content-type': 'application/json'};
     if (token != null) {
       headers['authorization'] = 'Bearer $token';

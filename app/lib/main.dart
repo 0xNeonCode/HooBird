@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:matrix/matrix.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'endpoints.dart';
 import 'session.dart';
 import 'theme.dart';
 import 'ui/gate.dart';
@@ -17,11 +18,16 @@ Future<void> main() async {
   String? bootstrapError;
   Client? client;
   try {
+    final rejected = endpointRejection(buildHomeserver) ?? endpointRejection(buildPolicyUrl);
+    if (rejected != null) {
+      throw StateError(rejected);
+    }
+    await dropStoredSessionWhenBuildServerDiffers(prefs);
     await initVodozemac();
     client = await openHoobirdClient();
-    final stored = prefs.getString('homeserver');
+    final stored = resolvedEndpoint(prefs.getString('homeserver'), buildHomeserver);
     await client.init(
-      newHomeserver: stored == null || stored.isEmpty ? null : Uri.parse(stored),
+      newHomeserver: Uri.parse(stored),
     );
   } catch (exc) {
     bootstrapError = 'Start fehlgeschlagen: $exc';
