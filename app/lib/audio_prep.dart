@@ -101,6 +101,14 @@ String? voiceTakeRejection({
   return null;
 }
 
+/// A short hold is a slip. An empty file or a silent peak means the mic
+/// produced nothing, which is how a muted HyperOS mic shows up. The blocked
+/// hint is for that result, not for a permission reading taken beforehand.
+String voiceTakeHint(String reason) {
+  if (reason == 'too_short') return 'Zu kurz. Halte die Taste etwas länger.';
+  return 'Mikrofon blockiert. Nichts wurde gesendet.';
+}
+
 Uint8List _u32bytes(int value) {
   return Uint8List.fromList([
     (value >> 24) & 0xFF,

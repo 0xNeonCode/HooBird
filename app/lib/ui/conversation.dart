@@ -434,11 +434,7 @@ class _ConversationPageState extends State<ConversationPage> {
       final reason = voiceTakeRejection(byteLength: length, elapsedMs: elapsed, peak: peak);
       if (reason != null) {
         if (file.existsSync()) file.deleteSync();
-        final message = switch (reason) {
-          'too_short' => 'Zu kurz. Halte die Taste etwas länger.',
-          'empty' => 'Es wurde keine Tondatei geschrieben. Nichts wurde gesendet.',
-          _ => 'Die Aufnahme ist stumm. Nichts wurde gesendet. Prüfe die Mikrofonberechtigung, auch unter HyperOS.',
-        };
+        final message = voiceTakeHint(reason);
         if (mounted) {
           setState(() {
             _recording = false;

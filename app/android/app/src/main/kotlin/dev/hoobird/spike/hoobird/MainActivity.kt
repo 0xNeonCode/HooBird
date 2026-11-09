@@ -155,6 +155,13 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /**
+     * HyperOS reports [AppOpsManager.MODE_FOREGROUND] for a mic the user already
+     * allowed, because this app records only while it is in front. That is not a
+     * block. Only ignore and error are. Recording does not refuse on this reading:
+     * a mic HyperOS actually muted shows up afterwards as an empty file or a peak
+     * of zero, and that is when the hint is shown.
+     */
     private fun micOpsAllowed(): Boolean {
         val appOps = getSystemService(AppOpsManager::class.java) ?: return true
         val mode =
@@ -172,17 +179,13 @@ class MainActivity : FlutterActivity() {
                     packageName,
                 )
             }
-        return mode == AppOpsManager.MODE_ALLOWED
+        return mode != AppOpsManager.MODE_IGNORED && mode != AppOpsManager.MODE_ERRORED
     }
 
     private fun requestMic(result: MethodChannel.Result) {
         val granted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        if (granted && micOpsAllowed()) {
+        if (granted) {
             result.success("granted")
-            return
-        }
-        if (granted && !micOpsAllowed()) {
-            result.success("blocked")
             return
         }
         if (permissionResult != null) {
@@ -204,8 +207,7 @@ class MainActivity : FlutterActivity() {
         val askAgain = shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)
         val status =
             when {
-                granted && micOpsAllowed() -> "granted"
-                granted -> "blocked"
+                granted -> "granted"
                 askAgain -> "denied"
                 else -> "blocked"
             }
@@ -216,14 +218,6 @@ class MainActivity : FlutterActivity() {
     private fun startRecording(path: String?, result: MethodChannel.Result) {
         if (path.isNullOrEmpty()) {
             result.error("record_failed", "Der Aufnahmepfad fehlt.", null)
-            return
-        }
-        if (!micOpsAllowed()) {
-            result.error(
-                "record_failed",
-                "Das Mikrofon ist blockiert. Erlaube es in den App-Einstellungen, auch unter den Berechtigungen von HyperOS.",
-                null,
-            )
             return
         }
         try {
@@ -274,8 +268,8 @@ class MainActivity : FlutterActivity() {
 
     private fun micFailureMessage(exc: Exception): String {
         val raw = exc.message ?: ""
-        if (exc is SecurityException || raw.contains("permission", ignoreCase = true)) {
-            return "Das Mikrofon ist blockiert. Erlaube es in den App-Einstellungen, auch unter den Berechtigungen von HyperOS."
+        if (exc is SecurityException || raw.contains("permission", ignoreCase = true) || !micOpsAllowed()) {
+            return "Mikrofon blockiert. Nichts wurde gesendet."
         }
         return raw.ifBlank { "Die Aufnahme konnte nicht starten." }
     }

@@ -50,5 +50,8 @@ void main() {
     expect(voiceTakeRejection(byteLength: 400, elapsedMs: 1500, peak: 0), 'silent');
     expect(voiceTakeRejection(byteLength: 400, elapsedMs: 1500, peak: 0.2), isNull);
     expect(voiceMinimumMs, 1000);
+    expect(voiceTakeHint('too_short'), 'Zu kurz. Halte die Taste etwas länger.');
+    expect(voiceTakeHint('empty'), 'Mikrofon blockiert. Nichts wurde gesendet.');
+    expect(voiceTakeHint('silent'), 'Mikrofon blockiert. Nichts wurde gesendet.');
   });
 }
