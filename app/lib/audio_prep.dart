@@ -87,23 +87,31 @@ int _u64(Uint8List data, int offset) {
   return value;
 }
 
-/// Under a second is a slip. An empty file or a peak of zero is not a message.
+/// Under a second is a slip. A tiny file has no audio payload.
 const voiceMinimumMs = 1000;
+
+/// AAC at 64 kbit/s is several kilobytes per second. Under this is not a take.
+const voiceMinimumBytes = 1024;
+
+/// Full-scale RMS. Encoder noise of a muted mic stays under this. Speech does not.
+/// The UI peak is not used: HyperOS often reports amplitude 0 while the file has audio.
+const voiceSilenceRms = 0.01;
 
 String? voiceTakeRejection({
   required int byteLength,
   required int elapsedMs,
-  required double peak,
+  required double rms,
+  required bool decoded,
 }) {
   if (elapsedMs < voiceMinimumMs) return 'too_short';
-  if (byteLength < 12) return 'empty';
-  if (peak <= 0) return 'silent';
+  if (byteLength < voiceMinimumBytes) return 'empty';
+  if (decoded && rms < voiceSilenceRms) return 'silent';
   return null;
 }
 
-/// A short hold is a slip. An empty file or a silent peak means the mic
-/// produced nothing, which is how a muted HyperOS mic shows up. The blocked
-/// hint is for that result, not for a permission reading taken beforehand.
+/// A short hold is a slip. An empty or decoded-silent file is a blocked mic.
+/// A file that could not be decoded is sent when it is long enough, so a
+/// decoder failure does not swallow a real message.
 String voiceTakeHint(String reason) {
   if (reason == 'too_short') return 'Zu kurz. Halte die Taste etwas länger.';
   return 'Mikrofon blockiert. Nichts wurde gesendet.';

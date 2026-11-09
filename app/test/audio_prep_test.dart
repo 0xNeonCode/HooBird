@@ -45,11 +45,30 @@ void main() {
   });
 
   test('Zu kurze, leere oder stumme Aufnahmen werden nicht gesendet', () {
-    expect(voiceTakeRejection(byteLength: 400, elapsedMs: 400, peak: 0.4), 'too_short');
-    expect(voiceTakeRejection(byteLength: 8, elapsedMs: 1500, peak: 0.4), 'empty');
-    expect(voiceTakeRejection(byteLength: 400, elapsedMs: 1500, peak: 0), 'silent');
-    expect(voiceTakeRejection(byteLength: 400, elapsedMs: 1500, peak: 0.2), isNull);
+    expect(
+      voiceTakeRejection(byteLength: 8000, elapsedMs: 400, rms: 0.2, decoded: true),
+      'too_short',
+    );
+    expect(
+      voiceTakeRejection(byteLength: 400, elapsedMs: 1500, rms: 0.2, decoded: true),
+      'empty',
+    );
+    expect(
+      voiceTakeRejection(byteLength: 8000, elapsedMs: 1500, rms: 0, decoded: true),
+      'silent',
+    );
+    expect(
+      voiceTakeRejection(byteLength: 8000, elapsedMs: 1500, rms: 0.2, decoded: true),
+      isNull,
+    );
+    // A missing UI peak must not reject a file the decoder could not read.
+    expect(
+      voiceTakeRejection(byteLength: 8000, elapsedMs: 4400, rms: 0, decoded: false),
+      isNull,
+    );
     expect(voiceMinimumMs, 1000);
+    expect(voiceMinimumBytes, 1024);
+    expect(voiceSilenceRms, 0.01);
     expect(voiceTakeHint('too_short'), 'Zu kurz. Halte die Taste etwas länger.');
     expect(voiceTakeHint('empty'), 'Mikrofon blockiert. Nichts wurde gesendet.');
     expect(voiceTakeHint('silent'), 'Mikrofon blockiert. Nichts wurde gesendet.');

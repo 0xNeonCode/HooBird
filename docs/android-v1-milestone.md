@@ -118,3 +118,17 @@ Auf dem Xiaomi 14 (HyperOS, SDK 36) war `RECORD_AUDIO` erteilt, AppOps für die 
 - `flutter analyze`: keine Beanstandungen.
 - `flutter test test/audio_prep_test.dart test/voice_hold_test.dart`: 5 bestanden.
 - `flutter build apk --debug --target-platform android-arm64` mit `HOOBIRD_HOMESERVER=https://hoobird.0xneoncode.de` und `HOOBIRD_POLICY_BASE=https://hoobird.0xneoncode.de/policy`. Debug-signiert, kein Produktionsschlüssel. `hoobird-arm64-v8a-debug-testserver-3.apk`, 81635006 Bytes, SHA-256 `0eaaf2a0115719f3a38bd1ec8f342bbf93fbbe4a852ee4441ab643a2031a769d`. `libflutter.so` liegt nur unter `arm64-v8a`. Klartext bleibt aus, außer für `127.0.0.1` und `localhost`. Im Kernel stehen die beiden HTTPS-Adressen und „Mikrofon blockiert“. Die alte Vorprüfungszeile steht nicht mehr darin. Diese Fassung wurde hier nicht auf einem Telefon ausgeführt. Der VServer wurde nicht angefasst.
+
+### Achter Lauf
+
+Auf dem Xiaomi 14 mit Fassung 3 startete MediaRecorder, und ein Stopp ohne Daten endete mit `-1007` und danach `stop called in an invalid state: 32`, weil der Fehlerpfad `stop` ein zweites Mal rief. Eine zweite Aufnahme lief 4,4 Sekunden, AppOps sah `RECORD_AUDIO`, und die Datei wurde trotzdem gelöscht. Die Wellenform blieb leer: die Pegelereignisse kamen in der Oberfläche nicht an, `_peak` blieb 0, und die Aufnahme galt als stumm.
+
+Der zweite Stopp wird nicht mehr ausgeführt. Die Ereignisleitung bleibt eine einzige Anmeldung, die Aufnahme gilt schon vor `start` als laufend, und die ersten Pegel werden mit dem Tag `HooBirdVoice` geloggt. Stille kommt aus der dekodierten Datei (RMS), nicht aus dem angezeigten Pegel. Ein Pegel von 0 in der Leiste verwirft die Aufnahme nicht. Startet `MIC` nicht, folgen `VOICE_RECOGNITION` und `VOICE_COMMUNICATION`.
+
+Die Eule erwartet öffentliche Quittungen `m.read`. `m.read.private` bleibt die Quittung für die eigenen Geräte und zählt nicht als Gelesen. Gruppen, Erwähnen und Einladen waren schon da; die Kinderregel und die Verwaltung sind jetzt als reine Funktionen geprüft. Eine Kamerataste hängt neben der Galerie. Der Eltern-QR wird nicht gescannt. Push ist nicht gebaut: UnifiedPush/ntfy oder FCM, siehe die Checkliste.
+
+- `flutter analyze`: keine Beanstandungen.
+- `flutter test` für Audio, Pegel, Haltegesten, Quittungen, Raumregeln, Zustellung und die Bildansicht: 21 bestanden.
+- `./gradlew :app:testDebugUnitTest --tests dev.hoobird.spike.hoobird.PcmRmsTest`: bestanden. Stille hat RMS 0. Ein 440-Hz-Ton liegt über 0,01.
+- Kein Emulator, kein `adb`-Gerät, kein lokales Synapse (`runtime/localhost.env` fehlt, Docker nicht vorhanden). Deshalb kein gesprochenes Beispiel und kein verschlüsselter Upload an einen lokalen Server.
+- `flutter build apk --debug --target-platform android-arm64` mit `HOOBIRD_HOMESERVER=https://hoobird.0xneoncode.de` und `HOOBIRD_POLICY_BASE=https://hoobird.0xneoncode.de/policy`. Debug-signiert, kein Produktionsschlüssel. `hoobird-arm64-v8a-debug-testserver-4.apk`, 81642424 Bytes, SHA-256 `0f1e7a895fc664daf6507fca8da52edfce4a21c4995e8c9305f29666cc3a7b01`. `libflutter.so` liegt nur unter `arm64-v8a`. Klartext bleibt aus, außer für `127.0.0.1` und `localhost`. Im Kernel stehen die beiden HTTPS-Adressen, `m.read.private` und „Foto aufnehmen“. `HooBirdVoice` und `VOICE_RECOGNITION` stehen im Dex. Diese Fassung wurde hier nicht auf einem Telefon ausgeführt. Der VServer wurde nicht angefasst.

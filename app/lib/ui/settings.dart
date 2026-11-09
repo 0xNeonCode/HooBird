@@ -87,7 +87,7 @@ class _SettingsPageState extends State<SettingsPage> {
           contentPadding: EdgeInsets.zero,
           title: const Text('Lesebestätigungen'),
           subtitle: const Text(
-            'Aus ist die Voreinstellung. Dann sendet HooBird keine öffentliche Lesebestätigung und zeigt auch nicht, ob andere gelesen haben. Eine private Lesemarke für die eigenen Geräte bleibt.',
+            'Aus ist die Voreinstellung. Dann geht keine öffentliche Quittung m.read raus, und der Lesestand anderer wird nicht gezeigt. Die Eule reagiert nur auf m.read, nicht auf m.read.private. Eine private Quittung für die eigenen Geräte bleibt.',
           ),
           value: controller.sendReceipts,
           onChanged: (value) => controller.setSendReceipts(value),

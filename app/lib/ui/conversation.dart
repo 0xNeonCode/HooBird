@@ -16,9 +16,12 @@ import 'package:path_provider/path_provider.dart';
 import '../audio_prep.dart';
 import '../media_prep.dart';
 import '../policy_api.dart';
+import '../receipts.dart';
+import '../room_rules.dart';
 import '../security_label.dart';
 import '../session.dart';
 import '../voice_io.dart';
+import '../voice_meter.dart';
 import 'delivery.dart';
 import 'image_view.dart';
 import 'shell.dart';
@@ -52,7 +55,7 @@ class _ConversationPageState extends State<ConversationPage> {
   var _elapsedMs = 0;
   String? _previewPath;
   final _levels = <double>[];
-  var _peak = 0.0;
+  final _meter = VoiceMeter();
   String? _playingPath;
   var _playing = false;
   var _playPos = 0;
@@ -64,16 +67,13 @@ class _ConversationPageState extends State<ConversationPage> {
   var _finishing = false;
   final _deliverySeen = <String>{};
   final _deliveryRead = <String>{};
-  StreamSubscription<Map<String, Object?>>? _voiceEvents;
-
   @override
   void initState() {
     super.initState();
     _open();
     _input.addListener(_onComposerChanged);
-    if (VoiceIo.supported) {
-      _voiceEvents = VoiceIo.events.listen(_onVoiceEvent);
-    }
+    VoiceIo.addListener(_onVoiceEvent);
+    if (VoiceIo.supported) unawaited(VoiceIo.ensureListening());
   }
 
   Future<void> _open() async {
@@ -93,9 +93,9 @@ class _ConversationPageState extends State<ConversationPage> {
 
   @override
   void dispose() {
-    _voiceEvents?.cancel();
+    VoiceIo.removeListener(_onVoiceEvent);
     if (_recording) {
-      VoiceIo.stop().catchError((_) => 0);
+      unawaited(VoiceIo.stop().then<void>((_) {}, onError: (_, _) {}));
     }
     if (VoiceIo.supported) {
       VoiceIo.stopPlayback().catchError((_) {});
@@ -129,18 +129,17 @@ class _ConversationPageState extends State<ConversationPage> {
 
   void _onVoiceEvent(Map<String, Object?> event) {
     if (!mounted) return;
-    if (event['kind'] == 'recording' && _recording) {
-      final elapsed = event['elapsedMs'];
-      final amplitude = event['amplitude'];
+    if (event['kind'] == 'recording') {
+      _meter.recording = _recording;
+      _meter.apply(event);
+      if (!_recording) return;
       setState(() {
-        if (elapsed is int) _elapsedMs = elapsed;
-        if (amplitude is num) {
-          final level = amplitude.toDouble().clamp(0.0, 1.0);
-          _levels.add(level);
-          if (level > _peak) _peak = level;
-        }
+        _elapsedMs = _meter.elapsedMs;
+        _levels
+          ..clear()
+          ..addAll(_meter.levels);
       });
-      if (elapsed is int && elapsed >= 180000) _releaseSend();
+      if (_meter.elapsedMs >= 180000) _releaseSend();
     }
     if (event['kind'] == 'playback') {
       setState(() {
@@ -156,9 +155,10 @@ class _ConversationPageState extends State<ConversationPage> {
     if (latest == null || latest.eventId == _markedEventId) return;
     _markedEventId = latest.eventId;
     try {
+      final plan = receiptPlan(sendReceipts: widget.controller.sendReceipts);
       await _timeline?.setReadMarker(
         eventId: latest.eventId,
-        public: widget.controller.sendReceipts,
+        public: plan.publicRead,
       );
     } catch (_) {}
   }
@@ -197,14 +197,14 @@ class _ConversationPageState extends State<ConversationPage> {
     return null;
   }
 
-  Future<void> _sendImage() async {
+  Future<void> _sendImage(ImageSource source) async {
     if (_sending || _editing != null || _recording) return;
     setState(() {
       _sending = true;
       _error = null;
     });
     try {
-      final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
+      final picked = await ImagePicker().pickImage(source: source);
       if (picked == null) return;
       final raw = await File(picked.path).readAsBytes();
       final stripped = stripJpegMetadata(Uint8List.fromList(raw));
@@ -356,20 +356,22 @@ class _ConversationPageState extends State<ConversationPage> {
       }
       final directory = await getTemporaryDirectory();
       final path = p.join(directory.path, 'hoobird-voice-${DateTime.now().microsecondsSinceEpoch}.m4a');
-      await VoiceIo.start(path);
-      if (!mounted) {
-        await VoiceIo.stop();
-        return false;
-      }
+      // Mark recording before start so the first amplitude tick is not dropped.
+      _meter.recording = true;
+      _meter.reset();
       setState(() {
         _recording = true;
         _locked = false;
         _elapsedMs = 0;
         _levels.clear();
-        _peak = 0;
         _error = null;
         _previewPath = path;
       });
+      await VoiceIo.start(path);
+      if (!mounted) {
+        await VoiceIo.stop();
+        return false;
+      }
       return true;
     } on PlatformException catch (exc) {
       _voiceHint(exc.message ?? 'Die Aufnahme konnte nicht starten.');
@@ -393,7 +395,6 @@ class _ConversationPageState extends State<ConversationPage> {
       _previewPath = null;
       _elapsedMs = 0;
       _levels.clear();
-      _peak = 0;
       _playing = false;
       if (hint != null) _error = hint;
     });
@@ -406,12 +407,10 @@ class _ConversationPageState extends State<ConversationPage> {
     if (!_recording || _finishing) return;
     _finishing = true;
     final path = _previewPath;
-    final elapsedSeen = _elapsedMs;
-    final peak = _peak;
     try {
-      var elapsed = elapsedSeen;
+      late final VoiceTake take;
       try {
-        elapsed = await VoiceIo.stop();
+        take = await VoiceIo.stop();
       } on PlatformException catch (exc) {
         if (path != null && File(path).existsSync()) File(path).deleteSync();
         final message = exc.code == 'record_stop_failed'
@@ -430,8 +429,19 @@ class _ConversationPageState extends State<ConversationPage> {
       }
       if (path == null) return;
       final file = File(path);
-      final length = file.existsSync() ? file.lengthSync() : 0;
-      final reason = voiceTakeRejection(byteLength: length, elapsedMs: elapsed, peak: peak);
+      final length = file.existsSync() ? file.lengthSync() : take.bytes;
+      final elapsed = take.elapsedMs;
+      final reason = voiceTakeRejection(
+        byteLength: length,
+        elapsedMs: elapsed,
+        rms: take.rms,
+        decoded: take.decoded,
+      );
+      unawaited(
+        VoiceIo.log(
+          'take reason=${reason ?? 'accept'} bytes=$length elapsed=$elapsed rms=${take.rms} decoded=${take.decoded}',
+        ),
+      );
       if (reason != null) {
         if (file.existsSync()) file.deleteSync();
         final message = voiceTakeHint(reason);
@@ -471,7 +481,6 @@ class _ConversationPageState extends State<ConversationPage> {
         _reply = null;
         _elapsedMs = 0;
         _levels.clear();
-        _peak = 0;
       });
     } on AudioPrepException catch (exc) {
       if (path != null && File(path).existsSync()) File(path).deleteSync();
@@ -635,7 +644,7 @@ class _ConversationPageState extends State<ConversationPage> {
       ),
     );
     if (id == null) return;
-    final next = _input.text.isEmpty ? '$id ' : '${_input.text} $id ';
+    final next = mentionInsertion(current: _input.text, userId: id);
     _input.value = TextEditingValue(text: next, selection: TextSelection.collapsed(offset: next.length));
   }
 
@@ -830,20 +839,26 @@ class _ConversationPageState extends State<ConversationPage> {
           children: [
             ListTile(title: const Text('Nachricht'), subtitle: Text(_stamp(event.originServerTs))),
             if (mine) ListTile(title: Text(deliveryLabel(state))),
-            if (!widget.controller.sendReceipts)
-              const ListTile(
-                title: Text('Lesebestätigungen sind aus'),
-                subtitle: Text('Du sendest keine und siehst nicht, wer gelesen hat.'),
-              )
-            else if (mine) ...[
-              if (coverage.readers.isEmpty)
-                const ListTile(title: Text('Gelesen von niemandem sonst'))
-              else
-                for (final id in coverage.readers)
-                  ListTile(title: Text(_memberName(id)), subtitle: const Text('Gelesen')),
-              for (final id in coverage.waiting)
-                ListTile(title: Text(_memberName(id)), subtitle: const Text('Noch nicht')),
-            ],
+            if (mine)
+              for (final line in readerLines(
+                sendReceipts: widget.controller.sendReceipts,
+                readers: coverage.readers,
+                waiting: coverage.waiting,
+              ))
+                ListTile(
+                  title: Text(switch (line.kind) {
+                    ReaderLineKind.off => 'Lesebestätigungen sind aus',
+                    ReaderLineKind.none => 'Gelesen von niemandem sonst',
+                    ReaderLineKind.read => _memberName(line.userId ?? ''),
+                    ReaderLineKind.waiting => _memberName(line.userId ?? ''),
+                  }),
+                  subtitle: Text(switch (line.kind) {
+                    ReaderLineKind.off => 'Du sendest keine öffentliche Quittung m.read und siehst nicht, wer gelesen hat.',
+                    ReaderLineKind.none => 'Noch keine öffentliche Quittung m.read.',
+                    ReaderLineKind.read => 'Gelesen',
+                    ReaderLineKind.waiting => 'Noch nicht',
+                  }),
+                ),
           ],
         ),
       ),
@@ -1222,9 +1237,14 @@ class _ConversationPageState extends State<ConversationPage> {
                       icon: const Icon(Icons.alternate_email),
                     ),
                     IconButton(
-                      tooltip: 'Bild senden. GPS wird vor dem Senden entfernt. Text im Feld wird zur Beschriftung.',
-                      onPressed: _sending || _editing != null ? null : _sendImage,
+                      tooltip: 'Bild aus der Galerie. GPS wird vor dem Senden entfernt. Text im Feld wird zur Beschriftung.',
+                      onPressed: _sending || _editing != null ? null : () => _sendImage(ImageSource.gallery),
                       icon: const Icon(Icons.image_outlined),
+                    ),
+                    IconButton(
+                      tooltip: 'Foto aufnehmen. GPS wird vor dem Senden entfernt. Text im Feld wird zur Beschriftung.',
+                      onPressed: _sending || _editing != null ? null : () => _sendImage(ImageSource.camera),
+                      icon: const Icon(Icons.photo_camera_outlined),
                     ),
                   ],
                   if (_recording)
@@ -1436,13 +1456,7 @@ class _RoomToolsState extends State<_RoomTools> {
     super.dispose();
   }
 
-  bool get _admin => widget.room.ownPowerLevel.level >= 50;
-
-  String _powerLabel(int level) {
-    if (level > 100) return 'Ersteller';
-    if (level >= 50) return 'Verwaltung';
-    return 'Stufe $level';
-  }
+  bool get _admin => isRoomAdmin(widget.room.ownPowerLevel.level);
 
   Future<void> _run(Future<void> Function() action) async {
     setState(() {
@@ -1468,14 +1482,7 @@ class _RoomToolsState extends State<_RoomTools> {
     final childId = me?['user_id']?.toString();
     if (token == null || childId == null) return {};
     final policy = await widget.controller.api.childPolicy(token, childId);
-    final contacts = policy['contacts'];
-    final allowed = <String>{};
-    if (contacts is List) {
-      for (final row in contacts.whereType<Map>()) {
-        if (row['effective'] == true) allowed.add('${row['user_id']}');
-      }
-    }
-    return allowed;
+    return approvedContactIds(policy['contacts']);
   }
 
   Future<void> _inviteByName() async {
@@ -1492,8 +1499,9 @@ class _RoomToolsState extends State<_RoomTools> {
     }
     final userId = '${first['user_id']}';
     final allowed = await _childAllowList();
-    if (allowed != null && !allowed.contains(userId)) {
-      throw PolicyException(403, 'not_approved', 'Ein Kinderkonto lädt nur freigegebene Kontakte ein.');
+    if (allowed != null) {
+      final blocked = childInviteBlock(isChild: true, approved: allowed, userId: userId);
+      if (blocked != null) throw PolicyException(403, 'not_approved', blocked);
     }
     await widget.room.invite(userId);
     _invite.clear();
@@ -1549,7 +1557,7 @@ class _RoomToolsState extends State<_RoomTools> {
             for (final user in members)
               ListTile(
                 title: Text(user.displayName ?? user.id),
-                subtitle: Text('${user.membership.name} · ${_powerLabel(user.powerLevel.level)}'),
+                subtitle: Text('${user.membership.name} · ${powerLabel(user.powerLevel.level)}'),
                 trailing: user.id == me
                     ? null
                     : Wrap(
@@ -1557,10 +1565,10 @@ class _RoomToolsState extends State<_RoomTools> {
                         children: [
                           if (!room.isDirectChat && _admin && user.membership == Membership.join)
                             IconButton(
-                              tooltip: user.powerLevel.level >= 50 ? 'Verwaltung entziehen' : 'Verwaltung geben',
+                              tooltip: isRoomAdmin(user.powerLevel.level) ? 'Verwaltung entziehen' : 'Verwaltung geben',
                               onPressed: _busy
                                   ? null
-                                  : () => _run(() => room.setPower(user.id, user.powerLevel.level >= 50 ? 0 : 50)),
+                                  : () => _run(() => room.setPower(user.id, toggledAdminPower(user.powerLevel.level))),
                               icon: Icon(user.powerLevel.level >= 50 ? Icons.shield_outlined : Icons.admin_panel_settings_outlined),
                             ),
                           if (!room.isDirectChat && _admin)
