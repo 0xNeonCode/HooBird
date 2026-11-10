@@ -22,6 +22,9 @@ class VoiceTake {
     this.fileMaxAbs = 0,
     this.fileRms = 0,
     this.fileDecoded = false,
+    this.container = '',
+    this.mime = '',
+    this.path = '',
   });
 
   final int elapsedMs;
@@ -36,6 +39,9 @@ class VoiceTake {
   final int fileMaxAbs;
   final double fileRms;
   final bool fileDecoded;
+  final String container;
+  final String mime;
+  final String path;
 }
 
 /// Android microphone and playback. Other platforms have no recorder here.
@@ -165,9 +171,12 @@ class VoiceIo {
         fileMaxAbs: _int(value['fileMaxAbs']),
         fileRms: _double(value['fileRms']),
         fileDecoded: value['fileDecoded'] == true,
+        container: '${value['container'] ?? ''}',
+        mime: '${value['mime'] ?? ''}',
+        path: '${value['path'] ?? ''}',
       );
       await log(
-        'stop source=${take.source} rate=${take.sampleRate} bytes=${take.bytes} elapsed=${take.elapsedMs} pcmMax=${take.pcmMaxAbs} pcmRms=${take.pcmRms} fileMax=${take.fileMaxAbs} fileRms=${take.fileRms} fileDecoded=${take.fileDecoded} gateMax=${take.maxAbs} gateRms=${take.rms} decoded=${take.decoded}',
+        'stop source=${take.source} rate=${take.sampleRate} bytes=${take.bytes} elapsed=${take.elapsedMs} pcmMax=${take.pcmMaxAbs} pcmRms=${take.pcmRms} fileMax=${take.fileMaxAbs} fileRms=${take.fileRms} fileDecoded=${take.fileDecoded} container=${take.container} gateMax=${take.maxAbs} gateRms=${take.rms} decoded=${take.decoded}',
       );
       return take;
     }

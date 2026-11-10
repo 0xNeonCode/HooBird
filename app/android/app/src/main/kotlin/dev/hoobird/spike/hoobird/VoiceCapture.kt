@@ -9,6 +9,7 @@ import android.media.AudioRecord
 import android.media.AudioRecordingConfiguration
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
+import android.media.MediaCodecList
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
@@ -50,6 +51,9 @@ class VoiceCapture(
         val fileMaxAbs: Int = 0,
         val fileRms: Double = 0.0,
         val fileDecoded: Boolean = false,
+        val container: String = "",
+        val mime: String = "",
+        val path: String = "",
     )
 
     private val running = AtomicBoolean(false)
@@ -71,6 +75,11 @@ class VoiceCapture(
         if (!inForeground) {
             log(Log.WARN, "start refused activity not resumed")
             return "Die Aufnahme startet nur, solange HooBird sichtbar ist."
+        }
+        val free = freeBytes(path)
+        if (!storageAllowsRecording(free)) {
+            log(Log.WARN, "storage low free=$free")
+            return "Zu wenig Speicher für eine Aufnahme."
         }
         requestStop()
         joinWorker()
@@ -122,8 +131,8 @@ class VoiceCapture(
             if (allowed) Log.INFO else Log.WARN,
             "decision source=${stats.source} rate=${stats.sampleRate} samples=${stats.samples} " +
                 "pcmMax=${stats.pcmMaxAbs} pcmRms=${stats.pcmRms} fileDecoded=${stats.fileDecoded} " +
-                "fileMax=${stats.fileMaxAbs} fileRms=${stats.fileRms} elapsed=${stats.elapsedMs} " +
-                "bytes=${stats.bytes} send=$allowed",
+                "fileMax=${stats.fileMaxAbs} fileRms=${stats.fileRms} container=${stats.container} " +
+                "elapsed=${stats.elapsedMs} bytes=${stats.bytes} send=$allowed",
         )
         return stats
     }
@@ -154,70 +163,75 @@ class VoiceCapture(
                 MediaRecorder.AudioSource.DEFAULT to "DEFAULT",
                 MediaRecorder.AudioSource.CAMCORDER to "CAMCORDER",
             )
-        val rates = intArrayOf(48000, 44100)
-        log(Log.INFO, "probe order ${sources.joinToString(",") { it.second }} rates ${rates.joinToString(",")}")
+        val formats = supportedCaptureFormats { rate, channels -> minBuffer(rate, channels) }
+        log(
+            Log.INFO,
+            "probe order ${sources.joinToString(",") { it.second }} formats " +
+                formats.joinToString(",") { "${it.rate}/${it.channels}" },
+        )
         var chosen: AudioRecord? = null
         var chosenName = ""
         var chosenRate = 0
+        var chosenChannels = 1
         var primed = ByteArray(0)
         var fallbackSource = -1
         var fallbackRate = 0
+        var fallbackChannels = 1
         var fallbackName = ""
-        var prepared: MediaCodec? = null
+        var prepared: RunningEncoder? = null
         val pcm = PcmAccumulator()
         for ((source, name) in sources) {
             if (!running.get()) break
             var opened: AudioRecord? = null
             var rateUsed = 0
-            var preparedForSource: MediaCodec? = null
-            for (rate in rates) {
+            var channelsUsed = 1
+            var preparedForSource: RunningEncoder? = null
+            for (format in formats) {
                 if (!running.get()) break
                 // Build the encoder before the microphone opens, so the read
                 // loop is not paused for codec setup. A paused AudioRecord
                 // overflows and the rest of the take comes back as zeros.
-                val encoder =
-                    try {
-                        startEncoder(rate)
-                    } catch (exc: Exception) {
-                        log(Log.WARN, "encoder failed rate=$rate ${exc.message}")
-                        null
-                    } ?: continue
-                val candidate = openRecord(source, name, rate)
+                // A null encoder is the WAV fallback and is still usable.
+                val encoder = prepareEncoder(format.rate)
+                val candidate = openRecord(source, name, format.rate, format.channels)
                 if (candidate == null) {
-                    releaseCodec(encoder)
+                    encoder?.let { releaseCodec(it.codec) }
                     continue
                 }
                 opened = candidate
-                rateUsed = rate
+                rateUsed = format.rate
+                channelsUsed = format.channels
                 preparedForSource = encoder
                 break
             }
             val record = opened ?: continue
-            val probe = readProbe(record, name, rateUsed)
+            val probe = readProbe(record, name, rateUsed, channelsUsed)
             val recording = record.recordingState == AudioRecord.RECORDSTATE_RECORDING
             val silenced = clientSilenced(record)
             log(
                 if (probe.maxAbs == 0 || silenced) Log.WARN else Log.INFO,
-                "probe source=$name rate=$rateUsed max=${probe.maxAbs} rms=${probe.rms} " +
+                "probe source=$name rate=$rateUsed channels=$channelsUsed max=${probe.maxAbs} rms=${probe.rms} " +
                     "silenced=$silenced state=${record.recordingState} bytes=${probe.pcm.size}",
             )
             if (running.get() && recording && !silenced && fallbackSource < 0) {
                 fallbackSource = source
                 fallbackRate = rateUsed
+                fallbackChannels = channelsUsed
                 fallbackName = name
             }
             if (!running.get() || probeShouldRetry(recording, silenced, probe.maxAbs)) {
                 releaseRecord(record)
-                preparedForSource?.let { releaseCodec(it) }
+                preparedForSource?.let { releaseCodec(it.codec) }
                 continue
             }
             chosen = record
             chosenName = name
             chosenRate = rateUsed
+            chosenChannels = channelsUsed
             prepared = preparedForSource
             primed = probe.pcm
             pcm.addPcm16le(primed, primed.size)
-            log(Log.INFO, "source kept $name rate=$rateUsed pcmMax=${pcm.maxAbs}")
+            log(Log.INFO, "source kept $name rate=$rateUsed channels=$channelsUsed pcmMax=${pcm.maxAbs}")
             break
         }
         if (chosen == null && fallbackSource >= 0 && running.get()) {
@@ -225,22 +239,17 @@ class VoiceCapture(
             // stay at zero for the first few hundred milliseconds and then
             // deliver real samples. An all-zero take is still rejected later.
             log(Log.WARN, "all probes were zero, continuing on $fallbackName rate=$fallbackRate")
-            val encoder =
-                try {
-                    startEncoder(fallbackRate)
-                } catch (exc: Exception) {
-                    log(Log.WARN, "fallback encoder failed ${exc.message}")
-                    null
-                }
-            val reopened = if (encoder == null) null else openRecord(fallbackSource, fallbackName, fallbackRate)
+            val encoder = prepareEncoder(fallbackRate)
+            val reopened = openRecord(fallbackSource, fallbackName, fallbackRate, fallbackChannels)
             if (reopened != null) {
                 chosen = reopened
                 chosenName = fallbackName
                 chosenRate = fallbackRate
+                chosenChannels = fallbackChannels
                 prepared = encoder
                 primed = ByteArray(0)
-            } else if (encoder != null) {
-                releaseCodec(encoder)
+            } else {
+                encoder?.let { releaseCodec(it.codec) }
             }
         }
         val record = chosen
@@ -267,11 +276,16 @@ class VoiceCapture(
         val reader =
             Thread(
                 {
-                    val readBuffer = ByteArray(readChunkBytes(record))
+                    val readBuffer = ByteArray(readChunkBytes(record, chosenChannels))
                     var lastTick = 0L
                     var dropped = 0
                     try {
                         while (running.get()) {
+                            if (shouldStopForLength(SystemClock.elapsedRealtime() - startedAt)) {
+                                log(Log.WARN, "max duration")
+                                running.set(false)
+                                break
+                            }
                             // Blocking read. stop() from the encoder thread unblocks it.
                             // A non-blocking read that sleeps falls behind the HAL, and
                             // ranchu then inserts silence for the rest of the take.
@@ -281,11 +295,12 @@ class VoiceCapture(
                                 break
                             }
                             if (count == 0) continue
-                            pcm.addPcm16le(readBuffer, count)
-                            val copy = readBuffer.copyOf(count)
-                            if (!chunks.offer(copy)) {
+                            val mono = downmixToMono16le(readBuffer, count, chosenChannels)
+                            if (mono.isEmpty()) continue
+                            pcm.addPcm16le(mono, mono.size)
+                            if (!chunks.offer(mono)) {
                                 chunks.poll()
-                                chunks.offer(copy)
+                                chunks.offer(mono)
                                 dropped += 1
                                 if (dropped <= 3 || dropped % 25 == 0) {
                                     log(Log.WARN, "capture queue full dropped=$dropped")
@@ -304,10 +319,23 @@ class VoiceCapture(
                 "HooBirdVoiceRead",
             )
         reader.start()
+        val containerName = prepared?.container ?: "wav"
+        val outFile = outputFile(path, containerName)
+        var wroteWav = false
         try {
-            val encoder = prepared ?: startEncoder(chosenRate)
+            val runningEncoder = prepared
+            if (runningEncoder == null) {
+                wroteWav = writeWav(outFile, chosenRate, primed, chunks, readerDone, record)
+            } else {
+            val encoder = runningEncoder.codec
             codec = encoder
-            val container = MediaMuxer(path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            val muxerFormat =
+                if (containerName == "webm") {
+                    MediaMuxer.OutputFormat.MUXER_OUTPUT_WEBM
+                } else {
+                    MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4
+                }
+            val container = MediaMuxer(outFile.absolutePath, muxerFormat)
             muxer = container
             var track = -1
             val info = MediaCodec.BufferInfo()
@@ -389,6 +417,7 @@ class VoiceCapture(
                 encoder.queueInputBuffer(eos, 0, 0, pts, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
             }
             drain(true)
+            }
         } catch (exc: Exception) {
             log(Log.WARN, "encode failed ${exc.javaClass.simpleName} ${exc.message}")
         } finally {
@@ -415,16 +444,22 @@ class VoiceCapture(
                 muxer?.release()
             } catch (_: Exception) {
             }
-            if (!muxerStarted && file.exists()) file.delete()
+            if (!muxerStarted && !wroteWav && outFile.exists()) outFile.delete()
         }
-        return finishStats(file, chosenName, chosenRate, pcm)
+        return finishStats(outFile, chosenName, chosenRate, pcm, containerName)
     }
 
-    private fun finishStats(file: File, source: String, rate: Int, pcm: PcmAccumulator): Stats {
+    private fun finishStats(
+        file: File,
+        source: String,
+        rate: Int,
+        pcm: PcmAccumulator,
+        container: String = "",
+    ): Stats {
         val bytes = if (file.isFile) file.length() else 0L
         val decoded =
             if (bytes > 0L) {
-                decodeFile(file.absolutePath)
+                decodeFile(file.absolutePath, container)
             } else {
                 Decoded(false, 0, 0.0)
             }
@@ -443,15 +478,18 @@ class VoiceCapture(
             fileMaxAbs = decoded.maxAbs,
             fileRms = decoded.rms,
             fileDecoded = decoded.ok,
+            container = container,
+            mime = if (container.isEmpty()) "" else mimeForContainer(container),
+            path = if (file.isFile) file.absolutePath else "",
         )
     }
 
     private data class Probe(val pcm: ByteArray, val maxAbs: Int, val rms: Double)
 
-    private fun readProbe(record: AudioRecord, name: String, rate: Int): Probe {
+    private fun readProbe(record: AudioRecord, name: String, rate: Int, channels: Int): Probe {
         val stats = PcmAccumulator()
         val collected = java.io.ByteArrayOutputStream()
-        val buffer = ByteArray(readChunkBytes(record))
+        val buffer = ByteArray(readChunkBytes(record, channels))
         val deadline = SystemClock.elapsedRealtime() + 400
         var lastTick = 0L
         while (running.get() && SystemClock.elapsedRealtime() < deadline) {
@@ -461,8 +499,10 @@ class VoiceCapture(
                 break
             }
             if (count > 0) {
-                stats.addPcm16le(buffer, count)
-                collected.write(buffer, 0, count)
+                val mono = downmixToMono16le(buffer, count, channels)
+                if (mono.isEmpty()) continue
+                stats.addPcm16le(mono, mono.size)
+                collected.write(mono)
                 val now = SystemClock.elapsedRealtime()
                 if (now - lastTick >= 200) {
                     lastTick = now
@@ -493,21 +533,22 @@ class VoiceCapture(
         )
     }
 
-    private fun openRecord(source: Int, name: String, rate: Int): AudioRecord? {
-        val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+    private fun openRecord(source: Int, name: String, rate: Int, channels: Int): AudioRecord? {
+        val mask = if (channels == 1) AudioFormat.CHANNEL_IN_MONO else AudioFormat.CHANNEL_IN_STEREO
+        val min = minBuffer(rate, channels)
         if (min <= 0) {
-            log(Log.WARN, "no buffer source=$name rate=$rate code=$min")
+            log(Log.WARN, "no buffer source=$name rate=$rate channels=$channels code=$min")
             return null
         }
-        // One second of 16-bit mono. The platform minimum is only a few dozen
+        // One second of 16-bit PCM. The platform minimum is only a few dozen
         // milliseconds; a short stall then overruns and later reads are zeros.
-        val buffer = maxOf(min * 2, rate * 2)
+        val buffer = recordBufferBytes(min, rate, channels)
         return try {
             val format =
                 AudioFormat.Builder()
                     .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                     .setSampleRate(rate)
-                    .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                    .setChannelMask(mask)
                     .build()
             val builder =
                 AudioRecord.Builder()
@@ -529,7 +570,10 @@ class VoiceCapture(
                 releaseRecord(record)
                 return null
             }
-            log(Log.INFO, "opened source=$name rate=$rate session=${record.audioSessionId} bytes=$buffer")
+            log(
+                Log.INFO,
+                "opened source=$name rate=$rate channels=$channels session=${record.audioSessionId} bytes=$buffer",
+            )
             record
         } catch (exc: Exception) {
             log(Log.WARN, "open failed source=$name rate=$rate ${exc.javaClass.simpleName} ${exc.message}")
@@ -557,28 +601,129 @@ class VoiceCapture(
         return silenced
     }
 
-    private fun readChunkBytes(record: AudioRecord): Int {
+    private fun readChunkBytes(record: AudioRecord, channels: Int): Int {
         val frames = record.bufferSizeInFrames.coerceAtLeast(1)
-        return minOf(frames * 2, 3840).coerceAtLeast(2)
+        val bytes = frames * 2 * channels.coerceAtLeast(1)
+        return minOf(bytes, 3840 * channels.coerceAtLeast(1)).coerceAtLeast(2 * channels.coerceAtLeast(1))
     }
 
-    private fun startEncoder(rate: Int): MediaCodec {
+    private class RunningEncoder(
+        val codec: MediaCodec,
+        val container: String,
+    )
+
+    private fun minBuffer(rate: Int, channels: Int): Int {
+        val mask = if (channels == 1) AudioFormat.CHANNEL_IN_MONO else AudioFormat.CHANNEL_IN_STEREO
+        return AudioRecord.getMinBufferSize(rate, mask, AudioFormat.ENCODING_PCM_16BIT)
+    }
+
+    private fun prepareEncoder(rate: Int): RunningEncoder? {
+        val attempts = encoderAttempts(listEncoders(rate))
+        log(Log.INFO, "encoder attempts=${attempts.size} rate=$rate")
+        var failures = 0
+        for (attempt in attempts) {
+            try {
+                val codec = startOne(attempt, rate)
+                log(
+                    Log.INFO,
+                    "encoder chosen name=${attempt.name} mime=${attempt.mime} profile=${attempt.profile} container=${attempt.container}",
+                )
+                return RunningEncoder(codec, attempt.container)
+            } catch (exc: Exception) {
+                failures += 1
+                log(
+                    Log.WARN,
+                    "encoder failed name=${attempt.name} profile=${attempt.profile} ${exc.message} " +
+                        "next=${containerAfterFailures(attempts, failures)}",
+                )
+            }
+        }
+        log(Log.WARN, "encoder none, wav pcm")
+        return null
+    }
+
+    private fun listEncoders(rate: Int): List<ListedEncoder> {
+        val found = ArrayList<ListedEncoder>()
+        val infos =
+            try {
+                MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+            } catch (exc: Exception) {
+                log(Log.WARN, "codec list failed ${exc.message}")
+                return found
+            }
+        for (info in infos) {
+            if (!info.isEncoder) continue
+            for (mime in info.supportedTypes) {
+                if (mime != mimeAac && mime != mimeOpus) continue
+                try {
+                    val caps = info.getCapabilitiesForType(mime)
+                    val audio = caps.audioCapabilities
+                    val supportsRate = audio?.isSampleRateSupported(rate) == true
+                    val supportsChannels = (audio?.maxInputChannelCount ?: 0) >= 1
+                    val profiles = HashSet<String>()
+                    if (mime == mimeAac) {
+                        for (level in caps.profileLevels) {
+                            when (level.profile) {
+                                MediaCodecInfo.CodecProfileLevel.AACObjectLC -> profiles.add("lc")
+                                MediaCodecInfo.CodecProfileLevel.AACObjectHE,
+                                MediaCodecInfo.CodecProfileLevel.AACObjectHE_PS,
+                                -> profiles.add("he")
+                                else -> profiles.add("other")
+                            }
+                        }
+                    }
+                    found.add(ListedEncoder(info.name, mime, profiles, supportsRate, supportsChannels))
+                } catch (exc: Exception) {
+                    log(Log.WARN, "codec caps ${info.name} ${exc.message}")
+                }
+            }
+        }
+        return found
+    }
+
+    private fun startOne(attempt: EncoderAttempt, rate: Int): MediaCodec {
         val format =
-            MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, rate, 1).apply {
-                setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-                setInteger(MediaFormat.KEY_BIT_RATE, 64_000)
+            MediaFormat.createAudioFormat(attempt.mime, rate, 1).apply {
                 setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16_384)
                 setInteger(MediaFormat.KEY_CHANNEL_MASK, AudioFormat.CHANNEL_IN_MONO)
+                if (attempt.mime == mimeAac) {
+                    setInteger(MediaFormat.KEY_BIT_RATE, 64_000)
+                    if (attempt.profile == "lc") {
+                        setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+                    } else if (attempt.profile == "he") {
+                        setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectHE)
+                    }
+                } else {
+                    setInteger(MediaFormat.KEY_BIT_RATE, 24_000)
+                }
             }
-        val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
-        codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        codec.start()
+        val codec = MediaCodec.createByCodecName(attempt.name)
+        try {
+            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            codec.start()
+        } catch (exc: Exception) {
+            try {
+                codec.release()
+            } catch (_: Exception) {
+            }
+            throw exc
+        }
         return codec
     }
 
     private data class Decoded(val ok: Boolean, val maxAbs: Int, val rms: Double)
 
-    private fun decodeFile(path: String): Decoded {
+    private fun decodeFile(path: String, container: String): Decoded {
+        if (container == "wav") {
+            return try {
+                val read = wavLoudness(File(path).readBytes())
+                log(Log.INFO, "wav decoded ok=${read.ok} max=${read.maxAbs} rms=${read.rms} rate=${read.rate}")
+                if (!read.ok) Decoded(false, 0, 0.0) else Decoded(true, read.maxAbs, read.rms)
+            } catch (exc: Exception) {
+                log(Log.WARN, "wav header bad ${exc.message}")
+                Decoded(false, 0, 0.0)
+            }
+        }
         val extractor = MediaExtractor()
         var codec: MediaCodec? = null
         try {
@@ -666,40 +811,143 @@ class VoiceCapture(
         }
     }
 
+    private val focusListener =
+        AudioManager.OnAudioFocusChangeListener { change ->
+            log(Log.INFO, "audio focus change $change")
+            if (shouldStopOnFocusChange(change)) {
+                log(Log.WARN, "focus lost, stopping")
+                requestStop()
+            }
+        }
+    private var legacyFocus = false
+
     private fun requestFocus() {
-        if (audio == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = audio ?: return
         // Media usage, not voice-communication. On HyperOS a communication
         // focus can move the mic onto a path that captures digital zeros
         // while AudioService still reports the client as not silenced.
         try {
-            audio.mode = AudioManager.MODE_NORMAL
+            manager.mode = AudioManager.MODE_NORMAL
         } catch (exc: Exception) {
             log(Log.WARN, "audio mode ${exc.message}")
         }
-        val request =
-            AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build(),
+        log(Log.INFO, "route sco=${manager.isBluetoothScoOn} a2dp=${manager.isBluetoothA2dpOn}")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val request =
+                AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build(),
+                    )
+                    .setOnAudioFocusChangeListener(focusListener)
+                    .build()
+            focusRequest = request
+            legacyFocus = false
+            val granted = manager.requestAudioFocus(request)
+            log(Log.INFO, "audio focus result=$granted")
+        } else {
+            @Suppress("DEPRECATION")
+            val granted =
+                manager.requestAudioFocus(
+                    focusListener,
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE,
                 )
-                .setOnAudioFocusChangeListener { change ->
-                    log(Log.INFO, "audio focus change $change")
-                }
-                .build()
-        focusRequest = request
-        val granted = audio.requestAudioFocus(request)
-        log(Log.INFO, "audio focus result=$granted")
+            legacyFocus = true
+            log(Log.INFO, "audio focus result=$granted")
+        }
     }
 
     private fun abandonFocus() {
-        val request = focusRequest ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            audio?.abandonAudioFocusRequest(request)
+        val manager = audio
+        val request = focusRequest
+        if (request != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            manager?.abandonAudioFocusRequest(request)
+        } else if (legacyFocus && manager != null) {
+            @Suppress("DEPRECATION")
+            manager.abandonAudioFocus(focusListener)
         }
         focusRequest = null
+        legacyFocus = false
         log(Log.INFO, "audio focus released")
+    }
+
+    private fun freeBytes(path: String): Long {
+        return try {
+            val dir = File(path).parentFile ?: return Long.MAX_VALUE
+            if (!dir.exists()) dir.mkdirs()
+            android.os.StatFs(dir.absolutePath).availableBytes
+        } catch (exc: Exception) {
+            log(Log.WARN, "storage check ${exc.message}")
+            Long.MAX_VALUE
+        }
+    }
+
+    private fun outputFile(requested: String, container: String): File {
+        val ext =
+            when (container) {
+                "wav" -> "wav"
+                "webm" -> "webm"
+                else -> "m4a"
+            }
+        val file = File(requested)
+        return File(file.parentFile, file.nameWithoutExtension + ".$ext")
+    }
+
+    private fun writeWav(
+        file: File,
+        rate: Int,
+        primed: ByteArray,
+        chunks: ArrayBlockingQueue<ByteArray>,
+        readerDone: AtomicBoolean,
+        record: AudioRecord,
+    ): Boolean {
+        var stream: java.io.FileOutputStream? = null
+        return try {
+            file.parentFile?.mkdirs()
+            stream = java.io.FileOutputStream(file)
+            stream.write(ByteArray(44))
+            var dataBytes = 0
+            fun append(bytes: ByteArray) {
+                if (bytes.isEmpty()) return
+                stream?.write(bytes)
+                dataBytes += bytes.size
+            }
+            append(primed)
+            var stoppedRecord = false
+            while (true) {
+                val chunk = chunks.poll(40, TimeUnit.MILLISECONDS)
+                if (chunk != null) append(chunk)
+                if (!running.get() && !stoppedRecord) {
+                    stoppedRecord = true
+                    try {
+                        record.stop()
+                    } catch (exc: Exception) {
+                        log(Log.WARN, "record stop ${exc.message}")
+                    }
+                }
+                if (stoppedRecord && readerDone.get() && chunks.isEmpty()) break
+            }
+            stream.flush()
+            stream.close()
+            stream = null
+            java.io.RandomAccessFile(file, "rw").use { raf ->
+                raf.seek(0)
+                raf.write(wavHeader(dataBytes, rate, 1))
+            }
+            log(Log.INFO, "wav wrote bytes=$dataBytes rate=$rate")
+            true
+        } catch (exc: Exception) {
+            log(Log.WARN, "wav write failed ${exc.message}")
+            false
+        } finally {
+            try {
+                stream?.close()
+            } catch (_: Exception) {
+            }
+        }
     }
 
     private fun releaseCodec(codec: MediaCodec) {

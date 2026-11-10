@@ -85,7 +85,8 @@ class _MicTestPageState extends State<MicTestPage> {
         return;
       }
       final take = await VoiceIo.stop();
-      final file = File(path);
+      if (take.path.isNotEmpty) _path = take.path;
+      final file = File(_path ?? path);
       final length = file.existsSync() ? file.lengthSync() : take.bytes;
       final reason = voiceTakeRejection(
         byteLength: length,
@@ -100,6 +101,8 @@ class _MicTestPageState extends State<MicTestPage> {
         'decision=$decision',
         'source=${take.source}',
         'sampleRate=${take.sampleRate}',
+        'container=${take.container}',
+        'mime=${take.mime}',
         'elapsedMs=${take.elapsedMs}',
         'bytes=$length',
         'pcmMax=${take.pcmMaxAbs}',

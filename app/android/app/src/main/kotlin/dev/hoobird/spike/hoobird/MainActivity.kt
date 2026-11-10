@@ -7,6 +7,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.ContentValues
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import android.media.PlaybackParams
@@ -73,7 +74,8 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        Log.i("HooBirdVoice", "channel ready")
+        val debug = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        Log.i("HooBirdVoice", "channel ready debug=$debug")
         val messenger = flutterEngine.dartExecutor.binaryMessenger
         EventChannel(messenger, "dev.hoobird.spike.hoobird/voice_events").setStreamHandler(
             object : EventChannel.StreamHandler {
@@ -243,6 +245,9 @@ class MainActivity : FlutterActivity() {
             "fileMaxAbs" to 0,
             "fileRms" to 0.0,
             "fileDecoded" to false,
+            "container" to "",
+            "mime" to "",
+            "path" to "",
         )
     }
 
@@ -260,6 +265,9 @@ class MainActivity : FlutterActivity() {
             "fileMaxAbs" to stats.fileMaxAbs,
             "fileRms" to stats.fileRms,
             "fileDecoded" to stats.fileDecoded,
+            "container" to stats.container,
+            "mime" to stats.mime,
+            "path" to stats.path,
         )
     }
 

@@ -435,8 +435,9 @@ class _ConversationPageState extends State<ConversationPage> {
         }
         return;
       }
-      if (path == null) return;
-      final file = File(path);
+      if (path == null && take.path.isEmpty) return;
+      final stored = take.path.isNotEmpty ? take.path : path!;
+      final file = File(stored);
       final length = file.existsSync() ? file.lengthSync() : take.bytes;
       final elapsed = take.elapsedMs;
       final reason = voiceTakeRejection(
@@ -448,7 +449,7 @@ class _ConversationPageState extends State<ConversationPage> {
       );
       unawaited(
         VoiceIo.log(
-          'take reason=${reason ?? 'accept'} bytes=$length elapsed=$elapsed source=${take.source} rate=${take.sampleRate} pcmMax=${take.pcmMaxAbs} pcmRms=${take.pcmRms} fileMax=${take.fileMaxAbs} fileRms=${take.fileRms} fileDecoded=${take.fileDecoded}',
+          'take reason=${reason ?? 'accept'} bytes=$length elapsed=$elapsed source=${take.source} rate=${take.sampleRate} container=${take.container} pcmMax=${take.pcmMaxAbs} pcmRms=${take.pcmRms} fileMax=${take.fileMaxAbs} fileRms=${take.fileRms} fileDecoded=${take.fileDecoded}',
         ),
       );
       if (reason != null) {
@@ -465,7 +466,23 @@ class _ConversationPageState extends State<ConversationPage> {
         }
         return;
       }
-      final stripped = stripMp4Metadata(await file.readAsBytes());
+      final raw = await file.readAsBytes();
+      final Uint8List payload;
+      final String name;
+      final String mime;
+      if (take.container == 'wav') {
+        payload = raw;
+        name = 'sprachnachricht.wav';
+        mime = 'audio/wav';
+      } else if (take.container == 'webm') {
+        payload = raw;
+        name = 'sprachnachricht.webm';
+        mime = 'audio/webm';
+      } else {
+        payload = stripMp4Metadata(raw);
+        name = 'sprachnachricht.m4a';
+        mime = 'audio/mp4';
+      }
       if (!mounted) return;
       setState(() {
         _recording = false;
@@ -475,9 +492,9 @@ class _ConversationPageState extends State<ConversationPage> {
       });
       await widget.room.sendFileEvent(
         MatrixAudioFile(
-          bytes: stripped,
-          name: 'sprachnachricht.m4a',
-          mimeType: 'audio/mp4',
+          bytes: payload,
+          name: name,
+          mimeType: mime,
           duration: elapsed,
         ),
         extraContent: {'org.matrix.msc3245.voice': <String, dynamic>{}},
