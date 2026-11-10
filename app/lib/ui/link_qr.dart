@@ -22,7 +22,7 @@ class LinkQr extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         const Text(
-          'Der Code beweist nur, dass beide denselben kurzen Text kennen. Er beweist keine Sorgeberechtigung, keine Nähe und kein Alter. Diese Fassung öffnet die Kamera nicht.',
+          'Der Code beweist nur, dass beide denselben kurzen Text kennen. Er beweist keine Sorgeberechtigung, keine Nähe und kein Alter. Das andere Elternteil kann ihn scannen oder abtippen.',
         ),
         const SizedBox(height: 8),
         SelectableText(payload),

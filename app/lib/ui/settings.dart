@@ -4,10 +4,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../link_code.dart';
 import '../policy_api.dart';
 import '../session.dart';
 import 'legal.dart';
 import 'link_qr.dart';
+import 'link_scan.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key, required this.controller});
@@ -63,7 +65,7 @@ class _SettingsPageState extends State<SettingsPage> {
         Text('Rolle $role · Gerät ${controller.client?.deviceID ?? controller.deviceId}'),
         const SizedBox(height: 8),
         const Text(
-          'Die Matrix-ID bleibt stehen, wenn sich der Nutzername ändert. Verschlüsselt ist nicht dasselbe wie identitätsverifiziert. Eine Identitätsprüfung per QR oder Bluetooth gibt es nicht. Der Eltern-Code kann als QR gezeigt werden; die Kamera liest ihn hier nicht.',
+          'Die Matrix-ID bleibt stehen, wenn sich der Nutzername ändert. Verschlüsselt ist nicht dasselbe wie identitätsverifiziert. Eine Identitätsprüfung per QR oder Bluetooth gibt es nicht. Ein Eltern-Code kann gescannt oder abgetippt werden. Der Scan beweist keine Sorgeberechtigung.',
         ),
         const SizedBox(height: 16),
         SegmentedButton<ThemeMode>(
@@ -227,10 +229,10 @@ class _ParentPanelState extends State<ParentPanel> {
     if (token == null) return;
     var childId = _redeemChild.text.trim();
     var code = _redeemCode.text.trim();
-    final lines = code.split(RegExp(r'\r?\n')).map((line) => line.trim()).where((line) => line.isNotEmpty).toList();
-    if (lines.length >= 3 && lines.first == 'hoobird-link:v1') {
-      childId = lines[1];
-      code = lines[2];
+    final parsed = parseLinkPayload(code);
+    if (parsed != null) {
+      childId = parsed.childId;
+      code = parsed.code;
     }
     try {
       await widget.controller.api.redeemParent(token, childId, code);
@@ -240,6 +242,26 @@ class _ParentPanelState extends State<ParentPanel> {
     } on PolicyException catch (exc) {
       setState(() => _notice = exc.message);
     }
+  }
+
+  Future<void> _scan() async {
+    final raw = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(builder: (_) => const LinkScanPage()),
+    );
+    if (!mounted || raw == null || raw.isEmpty) return;
+    final parsed = parseLinkPayload(raw);
+    if (parsed == null) {
+      setState(() {
+        _redeemCode.text = raw;
+        _notice = 'Der Scan ist kein Verknüpfungscode. Der Text kann abgetippt werden.';
+      });
+      return;
+    }
+    setState(() {
+      _redeemChild.text = parsed.childId;
+      _redeemCode.text = parsed.code;
+    });
+    await _redeem();
   }
 
   Future<void> _act(Future<void> Function(String token, String childId) action) async {
@@ -262,7 +284,7 @@ class _ParentPanelState extends State<ParentPanel> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const Text(
-          'Ein Elternteil zeigt den Code, das andere tippt ihn ab. Die Sperre eines Elternteils bleibt, bis genau dieses Elternteil sie aufhebt. Eine erneute Freigabe des anderen hebt sie nicht auf. Nachrichten und Schlüssel stehen hier nicht.',
+          'Ein Elternteil zeigt den Code, das andere scannt ihn oder tippt ihn ab. Die Sperre eines Elternteils bleibt, bis genau dieses Elternteil sie aufhebt. Eine erneute Freigabe des anderen hebt sie nicht auf. Nachrichten und Schlüssel stehen hier nicht.',
         ),
         const SizedBox(height: 8),
         TextField(
@@ -276,6 +298,9 @@ class _ParentPanelState extends State<ParentPanel> {
         ),
         const SizedBox(height: 8),
         OutlinedButton(onPressed: _redeem, child: const Text('Code einlösen')),
+        const SizedBox(height: 8),
+        OutlinedButton(onPressed: _scan, child: const Text('Code scannen')),
+        const Text('Wenn die Kamera fehlt oder der Scan nichts erkennt, die beiden Felder ausfüllen.'),
         if (children.isEmpty) const Text('Keine verknüpften Kinderkonten.'),
         for (final child in children)
           ListTile(
@@ -376,7 +401,7 @@ class _ParentPanelState extends State<ParentPanel> {
                   setState(() {
                     _linkPayload = 'hoobird-link:v1\n$childId\n${code['code']}';
                     _notice =
-                        'Gilt ${code['ttl_seconds']} Sekunden. Beweist nicht: ${code['does_not_prove']}. Die App öffnet dafür keine Kamera.';
+                        'Gilt ${code['ttl_seconds']} Sekunden. Beweist nicht: ${code['does_not_prove']}. Scannen oder abtippen.';
                   });
                 }),
                 child: const Text('Verknüpfungscode zeigen'),

@@ -4,7 +4,7 @@ Kurze Liste für ein physisches Xiaomi (arm64). Das ist ein Debug-Stand, kein St
 
 ## Welche App, welcher Server
 
-Die Datei für das Xiaomi heißt `hoobird-arm64-v8a-debug-testserver-4.apk`. Sie ist debug-signiert. Es ist kein Produktionsschlüssel und keine Store-Fassung. SHA-256 `0f1e7a895fc664daf6507fca8da52edfce4a21c4995e8c9305f29666cc3a7b01`, 81642424 Bytes. Dieselbe Zeile steht in `docs/android-v1-milestone.md` unter dem achten Lauf. Die vorherige Testserver-Datei `hoobird-arm64-v8a-debug-testserver-3.apk` bleibt liegen, SHA-256 `0eaaf2a0115719f3a38bd1ec8f342bbf93fbbe4a852ee4441ab643a2031a769d`. `hoobird-arm64-v8a-debug-testserver-2.apk` bleibt liegen, SHA-256 `af4e8c6e715da2efe4718b26319d073ad8cfd15c05d073fb8a6cd572226f16da`. `hoobird-arm64-v8a-debug-testserver.apk` bleibt ebenfalls liegen, SHA-256 `a08b39779b488157f9cdbb0468c9e11d673a56280f142e66f6139ef654fc9812`. Die älteren Loopback-APKs bleiben die Dateien ohne `testserver` im Namen. Die sprechen weiter `127.0.0.1` an und erreichen das Telefon im WLAN nicht.
+Die Datei für das Xiaomi heißt `hoobird-arm64-v8a-debug-testserver-5.apk`. Sie ist debug-signiert. Es ist kein Produktionsschlüssel und keine Store-Fassung. SHA-256 `11d44540afcbea664753d3ef23d40252e3f2f7c93cff90918f27272de2f4a273`, 58577066 Bytes. Dieselbe Zeile steht in `docs/android-v1-milestone.md` unter dem neunten Lauf. Die vorherige Testserver-Datei `hoobird-arm64-v8a-debug-testserver-4.apk` bleibt liegen, SHA-256 `0f1e7a895fc664daf6507fca8da52edfce4a21c4995e8c9305f29666cc3a7b01`. `hoobird-arm64-v8a-debug-testserver-3.apk` bleibt liegen, SHA-256 `0eaaf2a0115719f3a38bd1ec8f342bbf93fbbe4a852ee4441ab643a2031a769d`. `hoobird-arm64-v8a-debug-testserver-2.apk` bleibt liegen, SHA-256 `af4e8c6e715da2efe4718b26319d073ad8cfd15c05d073fb8a6cd572226f16da`. `hoobird-arm64-v8a-debug-testserver.apk` bleibt ebenfalls liegen, SHA-256 `a08b39779b488157f9cdbb0468c9e11d673a56280f142e66f6139ef654fc9812`. Die älteren Loopback-APKs bleiben die Dateien ohne `testserver` im Namen. Die sprechen weiter `127.0.0.1` an und erreichen das Telefon im WLAN nicht.
 
 Diese Testserver-APK ist zur Bauzeit festgelegt auf:
 
@@ -18,7 +18,7 @@ Konten stehen nicht in dieser Datei und nicht in der APK. Sie werden getrennt au
 ## Installieren
 
 1. Eine schon installierte HooBird-Debug-App deinstallieren.
-2. Unbekannte Quellen für die gewählte Datei-App erlauben, `hoobird-arm64-v8a-debug-testserver-4.apk` öffnen und installieren.
+2. Unbekannte Quellen für die gewählte Datei-App erlauben, `hoobird-arm64-v8a-debug-testserver-5.apk` öffnen und installieren.
 3. Startbild, Anmeldung mit dem getrennt erhaltenen Konto. Unter „Server anzeigen“ müssen die beiden HTTPS-Adressen oben stehen. Sie nicht auf `http://` oder `127.0.0.1` ändern.
 
 ## Wenn die Anmeldung den Server erreicht
@@ -35,7 +35,7 @@ Synthetische Konten, keine echten Personen. Die Konten kommen von außen, nicht 
 - Nachricht lang antippen, „Auswählen“, eine zweite Textnachricht dazu, weiterleiten. Im Zielraum steht „Weitergeleitet:“ und der Text, ohne die Matrix-Antwortzeile. Bild und Ton werden nicht weitergeleitet.
 - Gruppe aus zwei Kontakten anlegen, umbenennen, ein Mitglied einladen, Verwaltung geben und entziehen, Mitglied entfernen, erwähnen, selbst verlassen. Ein neu eingeladenes Mitglied sieht die Nachrichten von vor seinem Beitritt nicht.
 - Kinderkonto nur, wenn ein Elternkonto es angelegt hat. Eine Gruppe mit dem Kind darf nur entstehen, wenn jeder andere Teilnehmer freigegeben ist. Ein nicht freigegebener Teilnehmer muss scheitern, auch wenn ein anderer Client die Einladung schickt.
-- Eltern: Verknüpfungscode zeigen. Es erscheint ein QR und derselbe Text zum Abtippen. Die App scannt den QR in dieser Fassung noch nicht. Das zweite Elternkonto tippt den Text ein. Der Code beweist keine Sorgeberechtigung. Freigeben, Sperren, die Sperre vom anderen Elternteil nicht aufheben können, Gerätefreigabe mit der angezeigten ed25519-Zeile. In dieser Ansicht stehen keine Nachrichten und keine Schlüssel.
+- Eltern: Verknüpfungscode zeigen. Es erscheint ein QR und derselbe Text zum Abtippen. Das andere Elternkonto kann „Code scannen“ wählen oder die beiden Felder ausfüllen. Der Scan öffnet die Kamera (`camera` und `zxing2`, beide BSD, kein bezahlter Scanner). Erkennt die Kamera nichts, bleibt „Abtippen“. Der Code beweist keine Sorgeberechtigung. Freigeben, Sperren, die Sperre vom anderen Elternteil nicht aufheben können, Gerätefreigabe mit der angezeigten ed25519-Zeile. In dieser Ansicht stehen keine Nachrichten und keine Schlüssel.
 - Nachricht auswählen, „Melden“. Nichts ist angehakt. Nur angehakte Texte sollen mitgehen. Ein Elternkonto sieht diese Meldung nicht.
 - Blockieren. Danach soll eine neue gemeinsame Unterhaltung vom Server abgelehnt werden.
 - Einstellung „Inhalt auf dem Sperrbildschirm verbergen“ ist an. Eine Push-Zustellung gibt es in dieser Fassung nicht. Es erscheint deshalb keine Vorschau, weder mit noch ohne Text.
@@ -67,8 +67,8 @@ Der Gegenpart ist ein matrix-bot-sdk-Bot. Die Eule zählt nur eine öffentliche 
 
 ## Bekannte Lücken
 
-- Kein Emulator und kein lokales Synapse in diesem Lauf. Die Wellenform ist mit einem nachgebauten Rekorder geprüft, der Pegelereignisse schickt. Die Stille entscheidet ein RMS über PCM; ein eingespeister 440-Hz-Ton liegt im JVM-Test über der Schwelle. Ein gesprochenes Beispiel auf dem Telefon und ein verschlüsselter Upload an Synapse sind damit nicht belegt.
-- Keine Kamera zum Scannen des Eltern-QR. Zeigen und Abtippen sind da. Ein Foto im Chat geht über die Kamerataste, das ist nicht der QR.
+- Der neunte Lauf hat einen Emulator (android-35, x86_64, KVM) und den lokalen Stack mit den Skripten aus dem Repo gefahren. Die Wellenform, die Gesten und „Mikrofon blockiert“ sind dort gesehen worden, siehe den neunten Lauf. Die Eule, das Info-Blatt und „Erneut senden“ wurden auf dem Emulator nicht angetippt. Ein Xiaomi wurde in diesem Lauf nicht angefasst.
+- Der Live-Kamerascan hat auf dem Emulator das Vorschaubild und „Abtippen“ gezeigt. Ein ausgedruckter Code wurde von der laufenden Kamera nicht gelesen. Der Decoder ist mit einem selbst gezeichneten QR geprüft.
 - Keine Push-Zustellung. Der Schalter merkt sich nur die Sperrbildschirm-Sichtbarkeit des Android-Kanals. Ohne Bezahldienst bleiben zwei Wege: UnifiedPush mit einem Verteiler wie ntfy (kein Google-Konto, der Nutzer wählt den Verteiler) oder FCM (kein Entgelt für das übliche Kontingent, aber ein Google-Projekt und `google-services`). Beides ist nicht eingebaut.
 - Kein SAS, kein Identitäts-QR, kein Bluetooth.
 - Keine Umfragen, keine allgemeinen Dateien, keine verschwindenden Nachrichten, keine Anrufe.

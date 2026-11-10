@@ -151,7 +151,7 @@ class _GatePageState extends State<GatePage> {
             ),
             const SizedBox(height: 16),
             Text(
-              'Die E-Mail-Adresse ist optional und wird hier nicht abgefragt. Sie bestätigt nur ein Postfach, nicht Alter oder Identität. QR- und Bluetooth-Abgleich sind in diesem Meilenstein nicht umgesetzt.',
+              'Die E-Mail-Adresse ist optional und wird hier nicht abgefragt. Sie bestätigt nur ein Postfach, nicht Alter oder Identität. Elterncodes können in den Einstellungen gescannt oder abgetippt werden. Bluetooth-Abgleich ist in diesem Meilenstein nicht umgesetzt.',
               style: TextStyle(color: scheme.onSurfaceVariant, height: 1.35),
             ),
           ],

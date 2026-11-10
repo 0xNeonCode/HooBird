@@ -21,7 +21,8 @@ dependencies:
   sqflite_common_ffi: ^2.3.6
   qr: ^4.0.1
   scrollable_positioned_list: ^0.3.8
-
+  camera: ^0.12.2
+  zxing2: ^0.2.4
 dev_dependencies:
   flutter_test:
     sdk: flutter
