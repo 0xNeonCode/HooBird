@@ -149,3 +149,21 @@ Der Eltern-Scan nutzt `camera` 0.12.2 und `zxing2` 0.2.4, beide BSD, kein Play-S
 - Der lokale Stack lief über `./scripts/up.sh` (Postgres, Synapse, Policy). Der VServer wurde nicht angefasst. Kein Merge, kein Release.
 - `flutter build apk --debug --target-platform android-arm64` mit denselben beiden HTTPS-Adressen. Debug-signiert. Andere ABIs aus der Datei genommen und mit dem Debug-Schlüssel neu signiert, damit `libflutter.so` nur unter `arm64-v8a` liegt. `hoobird-arm64-v8a-debug-testserver-5.apk`, 58577066 Bytes, SHA-256 `11d44540afcbea664753d3ef23d40252e3f2f7c93cff90918f27272de2f4a273`. Im Kernel stehen die beiden HTTPS-Adressen, „Code scannen“ und „Abtippen“. Klartext bleibt auf `127.0.0.1` und `localhost` beschränkt. Diese Fassung wurde hier nicht auf einem Telefon ausgeführt.
 
+### Zehnter Lauf
+
+Auf dem Xiaomi 14 hat Fassung 5 zwei Sprachnachrichten verschickt, die der Partner entschlüsseln konnte. Der dekodierte Inhalt war digital null (ffmpeg astats Peak -inf). `logcat` zeigte keine Zeile `HooBirdVoice`. AudioService sah `src:MIC` und nicht silenced. Die Stille-Sperre hat die Datei trotzdem durchgelassen, weil eine fehlgeschlagene Pegelrechnung auf die Länge zurückgefallen ist.
+
+Die Aufnahme geht nicht mehr über MediaRecorder. `VoiceCapture` liest PCM 16-bit mit AudioRecord (48000, sonst 44100, mono), prüft die ersten 400 ms und wechselt die Quelle, wenn die Samples null sind, die Aufnahme nicht läuft oder `isClientSilenced` wahr ist. Reihenfolge: `VOICE_RECOGNITION`, `MIC`, `DEFAULT`, `CAMCORDER`. Ein eigener Lesethread schreibt die Samples; MediaCodec (AAC-LC, 64 kbit/s) und MediaMuxer laufen daneben, damit ein Encoder-Stopp den Puffer nicht überlaufen lässt. Der Puffer fasst mindestens eine Sekunde. Vor dem Start liegt der Fokus auf `AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE` mit Nutzung `MEDIA`, der Audiomodus ist `MODE_NORMAL`, und die Activity muss `RESUMED` sein. Danach wird der Fokus abgegeben. Die Pegelanzeige kommt aus den PCM-Samples, nicht aus `getMaxAmplitude`.
+
+Die Sperre ist geschlossen. Eine Aufnahme wird nur gesendet, wenn die Datei dekodiert wurde, der PCM-Pegel und der Datei-Pegel beide über 0 liegen und die RMS mindestens 0,01 ist. Schlägt das Dekodieren fehl oder ist ein Pegel 0, ist `send=false`. Unter einer Sekunde bleibt „Zu kurz“, unter 1 KB bleibt leer. `HooBirdVoice` schreibt mit `Log.i` und `Log.w`, und Dart druckt dieselbe Zeile. Jeder Tick nennt Amplitude, Quelle, Abtastrate, Maximum, RMS und Zeit. Die Entscheidung nennt Quelle, beide Pegel und `send`.
+
+Unter Einstellungen liegt „Mikrofontest“: drei Sekunden über denselben Weg, Pegel, Quelle, Abtastrate, Spitze, RMS, Wiedergabe und „Diagnose kopieren“. Nichts wird gesendet.
+
+Emulator android-35, x86_64, KVM, Wav-Mikrofon `qemu_in.wav` (440 Hz) und `-allow-host-audio`. Mikrofontest, Ton an: `source=VOICE_RECOGNITION`, `rate=48000`, `pcmMax=32767`, `fileDecoded=true`, `fileMax=32767`, `fileRms=0.037`, 20641 Bytes, `send=true`. Der Ranchu-HAL meldet danach `pcm_readi` I/O-Fehler und füllt den Rest der Aufnahme mit Nullen; der Anfang ist der echte Ton, und die Sperre lässt ihn durch. Dieselbe Seite mit `avd hostmicoff`: `fileRms` etwa 0,0007, `pcmRms` etwa 0,001, `send=false`. Gesten, Eule und QR sind in diesem Lauf nicht angefasst.
+
+- `flutter analyze`: keine Beanstandungen.
+- `flutter test test/audio_prep_test.dart test/voice_hold_test.dart`: 5 bestanden. Eine Datei aus Nullen und ein fehlgeschlagenes Dekodieren werden nicht gesendet.
+- `./gradlew :app:testDebugUnitTest --tests dev.hoobird.spike.hoobird.PcmRmsTest`: bestanden. PCM aus Nullen, fehlendes Dekodieren und RMS unter 0,01 sind `send=false`. Ein Ton liegt darüber.
+- Der VServer wurde nicht angefasst. Kein Merge, kein Release.
+- `flutter build apk --debug --target-platform android-arm64` mit `HOOBIRD_HOMESERVER=https://hoobird.0xneoncode.de` und `HOOBIRD_POLICY_BASE=https://hoobird.0xneoncode.de/policy`. Debug-signiert. Andere ABIs entfernt und mit dem Debug-Schlüssel neu signiert. `libflutter.so` nur unter `arm64-v8a`. `hoobird-arm64-v8a-debug-testserver-6.apk`, 58605738 Bytes, SHA-256 `8c98d2c4abaa33abb22301592361ad86e4a0b387fe0ff2a5f9436c38a7836d2d`. Im Kernel stehen die beiden HTTPS-Adressen und „Mikrofontest“. Klartext bleibt auf `127.0.0.1` und `localhost` beschränkt. Diese Fassung wurde hier nicht auf einem Telefon ausgeführt.
+

@@ -374,6 +374,14 @@ class _ConversationPageState extends State<ConversationPage> {
       }
       return true;
     } on PlatformException catch (exc) {
+      _meter.recording = false;
+      if (mounted) {
+        setState(() {
+          _recording = false;
+          _locked = false;
+          _previewPath = null;
+        });
+      }
       _voiceHint(exc.message ?? 'Die Aufnahme konnte nicht starten.');
       return false;
     }
@@ -436,10 +444,11 @@ class _ConversationPageState extends State<ConversationPage> {
         elapsedMs: elapsed,
         rms: take.rms,
         decoded: take.decoded,
+        maxAbs: take.maxAbs,
       );
       unawaited(
         VoiceIo.log(
-          'take reason=${reason ?? 'accept'} bytes=$length elapsed=$elapsed rms=${take.rms} decoded=${take.decoded}',
+          'take reason=${reason ?? 'accept'} bytes=$length elapsed=$elapsed source=${take.source} rate=${take.sampleRate} pcmMax=${take.pcmMaxAbs} pcmRms=${take.pcmRms} fileMax=${take.fileMaxAbs} fileRms=${take.fileRms} fileDecoded=${take.fileDecoded}',
         ),
       );
       if (reason != null) {

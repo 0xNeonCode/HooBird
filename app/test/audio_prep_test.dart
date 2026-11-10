@@ -46,25 +46,33 @@ void main() {
 
   test('Zu kurze, leere oder stumme Aufnahmen werden nicht gesendet', () {
     expect(
-      voiceTakeRejection(byteLength: 8000, elapsedMs: 400, rms: 0.2, decoded: true),
+      voiceTakeRejection(byteLength: 8000, elapsedMs: 400, rms: 0.2, decoded: true, maxAbs: 8000),
       'too_short',
     );
     expect(
-      voiceTakeRejection(byteLength: 400, elapsedMs: 1500, rms: 0.2, decoded: true),
+      voiceTakeRejection(byteLength: 400, elapsedMs: 1500, rms: 0.2, decoded: true, maxAbs: 8000),
       'empty',
     );
     expect(
-      voiceTakeRejection(byteLength: 8000, elapsedMs: 1500, rms: 0, decoded: true),
+      voiceTakeRejection(byteLength: 8000, elapsedMs: 1500, rms: 0, decoded: true, maxAbs: 0),
       'silent',
     );
     expect(
-      voiceTakeRejection(byteLength: 8000, elapsedMs: 1500, rms: 0.2, decoded: true),
+      voiceTakeRejection(byteLength: 8000, elapsedMs: 1500, rms: 0.2, decoded: true, maxAbs: 8000),
       isNull,
     );
-    // A missing UI peak must not reject a file the decoder could not read.
+    // All-zero PCM and a decode that did not run must not be sent.
     expect(
-      voiceTakeRejection(byteLength: 8000, elapsedMs: 4400, rms: 0, decoded: false),
-      isNull,
+      voiceTakeRejection(byteLength: 34607, elapsedMs: 4200, rms: 0, decoded: true, maxAbs: 0),
+      'silent',
+    );
+    expect(
+      voiceTakeRejection(byteLength: 34607, elapsedMs: 4200, rms: 0.2, decoded: false, maxAbs: 8000),
+      'silent',
+    );
+    expect(
+      voiceTakeRejection(byteLength: 8000, elapsedMs: 1500, rms: 0.009, decoded: true, maxAbs: 40),
+      'silent',
     );
     expect(voiceMinimumMs, 1000);
     expect(voiceMinimumBytes, 1024);

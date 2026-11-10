@@ -8,26 +8,17 @@ import android.app.NotificationManager
 import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.AudioAttributes
-import android.media.AudioFocusRequest
-import android.media.AudioManager
-import android.media.MediaCodec
-import android.media.MediaExtractor
-import android.media.MediaFormat
 import android.media.MediaPlayer
-import android.media.MediaRecorder
 import android.media.PlaybackParams
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
-import android.os.ParcelFileDescriptor
-import android.os.SystemClock
 import android.provider.MediaStore
 import android.provider.Settings
 import android.util.Log
-import java.nio.ByteOrder
+import androidx.lifecycle.Lifecycle
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -35,52 +26,38 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
-    private var recorder: MediaRecorder? = null
     private var player: MediaPlayer? = null
     private var events: EventChannel.EventSink? = null
     private var permissionResult: MethodChannel.Result? = null
-    private var startedAt: Long = 0
-    private var output: ParcelFileDescriptor? = null
-    private var focusRequest: AudioFocusRequest? = null
-    private var recordingPath: String? = null
-    private var tickLogsLeft = 0
-    private var lastStop: Map<String, Any> =
-        mapOf("elapsedMs" to 0, "bytes" to 0, "rms" to 0.0, "decoded" to false)
+    private var lastStop: Map<String, Any> = emptyStop()
     private val handler = Handler(Looper.getMainLooper())
+    private val capture by lazy {
+        VoiceCapture(
+            this,
+            log = { priority, message ->
+                if (priority >= Log.WARN) Log.w("HooBirdVoice", message) else Log.i("HooBirdVoice", message)
+            },
+            emit = { payload ->
+                handler.post {
+                    val sink = events
+                    if (sink == null) {
+                        Log.w("HooBirdVoice", "tick dropped, sink null")
+                        return@post
+                    }
+                    try {
+                        sink.success(payload)
+                    } catch (exc: Exception) {
+                        Log.w("HooBirdVoice", "tick send failed ${exc.message}")
+                    }
+                }
+            },
+        )
+    }
     private val tick =
         object : Runnable {
             override fun run() {
-                val recording = recorder
                 val playing = player
-                if (recording != null) {
-                    val amplitude =
-                        try {
-                            (recording.maxAmplitude / 32767.0).coerceIn(0.0, 1.0)
-                        } catch (exc: Exception) {
-                            voiceLog("amplitude failed ${exc.message}")
-                            0.0
-                        }
-                    val elapsed = System.currentTimeMillis() - startedAt
-                    val sink = events
-                    if (tickLogsLeft > 0) {
-                        tickLogsLeft -= 1
-                        voiceLog("tick amp=$amplitude elapsed=$elapsed sink=${sink != null}")
-                    }
-                    if (sink != null) {
-                        try {
-                            sink.success(
-                                mapOf(
-                                    "kind" to "recording",
-                                    "elapsedMs" to elapsed,
-                                    "amplitude" to amplitude,
-                                ),
-                            )
-                        } catch (exc: Exception) {
-                            voiceLog("tick send failed ${exc.message}")
-                        }
-                    }
-                    handler.postDelayed(this, 200)
-                } else if (playing != null && playing.isPlaying) {
+                if (playing != null && playing.isPlaying) {
                     events?.success(
                         mapOf(
                             "kind" to "playback",
@@ -96,6 +73,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        Log.i("HooBirdVoice", "channel ready")
         val messenger = flutterEngine.dartExecutor.binaryMessenger
         EventChannel(messenger, "dev.hoobird.spike.hoobird/voice_events").setStreamHandler(
             object : EventChannel.StreamHandler {
@@ -192,24 +170,22 @@ class MainActivity : FlutterActivity() {
      * a mic HyperOS actually muted shows up afterwards as an empty file or as
      * near-zero PCM after the file is decoded, and that is when the hint is shown.
      */
-    private fun micOpsAllowed(): Boolean {
-        val appOps = getSystemService(AppOpsManager::class.java) ?: return true
-        val mode =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                appOps.unsafeCheckOpNoThrow(
-                    AppOpsManager.OPSTR_RECORD_AUDIO,
-                    android.os.Process.myUid(),
-                    packageName,
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                appOps.checkOpNoThrow(
-                    AppOpsManager.OPSTR_RECORD_AUDIO,
-                    android.os.Process.myUid(),
-                    packageName,
-                )
-            }
-        return mode != AppOpsManager.MODE_IGNORED && mode != AppOpsManager.MODE_ERRORED
+    private fun micOpsMode(): Int {
+        val appOps = getSystemService(AppOpsManager::class.java) ?: return -1
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            appOps.unsafeCheckOpNoThrow(
+                AppOpsManager.OPSTR_RECORD_AUDIO,
+                android.os.Process.myUid(),
+                packageName,
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            appOps.checkOpNoThrow(
+                AppOpsManager.OPSTR_RECORD_AUDIO,
+                android.os.Process.myUid(),
+                packageName,
+            )
+        }
     }
 
     private fun requestMic(result: MethodChannel.Result) {
@@ -246,254 +222,72 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun voiceLog(message: String) {
-        val debuggable =
-            applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
-        if (!debuggable) return
         Log.i("HooBirdVoice", message)
+    }
+
+    private fun inForeground(): Boolean {
+        return !isFinishing && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+    }
+
+    private fun emptyStop(): Map<String, Any> {
+        return mapOf(
+            "elapsedMs" to 0,
+            "bytes" to 0,
+            "rms" to 0.0,
+            "maxAbs" to 0,
+            "decoded" to false,
+            "source" to "",
+            "sampleRate" to 0,
+            "pcmMaxAbs" to 0,
+            "pcmRms" to 0.0,
+            "fileMaxAbs" to 0,
+            "fileRms" to 0.0,
+            "fileDecoded" to false,
+        )
+    }
+
+    private fun payload(stats: VoiceCapture.Stats): Map<String, Any> {
+        return mapOf(
+            "elapsedMs" to stats.elapsedMs,
+            "bytes" to stats.bytes,
+            "rms" to stats.rms,
+            "maxAbs" to stats.maxAbs,
+            "decoded" to stats.decoded,
+            "source" to stats.source,
+            "sampleRate" to stats.sampleRate,
+            "pcmMaxAbs" to stats.pcmMaxAbs,
+            "pcmRms" to stats.pcmRms,
+            "fileMaxAbs" to stats.fileMaxAbs,
+            "fileRms" to stats.fileRms,
+            "fileDecoded" to stats.fileDecoded,
+        )
     }
 
     private fun startRecording(path: String?, result: MethodChannel.Result) {
         if (path.isNullOrEmpty()) {
+            Log.w("HooBirdVoice", "start refused, path missing")
             result.error("record_failed", "Der Aufnahmepfad fehlt.", null)
             return
         }
+        voiceLog("start requested foreground=${inForeground()} ops=${micOpsMode()} sink=${events != null}")
         stopPlayback()
-        releaseRecorder()
-        val file = java.io.File(path)
-        file.parentFile?.mkdirs()
-        recordingPath = path
-        val sources =
-            listOf(
-                MediaRecorder.AudioSource.MIC to "MIC",
-                MediaRecorder.AudioSource.VOICE_RECOGNITION to "VOICE_RECOGNITION",
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION to "VOICE_COMMUNICATION",
-            )
-        var last: Exception? = null
-        for ((source, name) in sources) {
-            var created: MediaRecorder? = null
-            try {
-                if (file.exists()) file.delete()
-                created =
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                        MediaRecorder(this)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        MediaRecorder()
-                    }
-                created.setAudioSource(source)
-                created.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                created.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                created.setAudioChannels(1)
-                created.setAudioSamplingRate(44100)
-                created.setAudioEncodingBitRate(64000)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    closeOutput()
-                    val descriptor =
-                        ParcelFileDescriptor.open(
-                            file,
-                            ParcelFileDescriptor.MODE_CREATE or
-                                ParcelFileDescriptor.MODE_READ_WRITE or
-                                ParcelFileDescriptor.MODE_TRUNCATE,
-                        )
-                    output = descriptor
-                    created.setOutputFile(descriptor.fileDescriptor)
-                } else {
-                    created.setOutputFile(path)
-                }
-                created.prepare()
-                created.start()
-                requestMicFocus()
-                recorder = created
-                startedAt = System.currentTimeMillis()
-                tickLogsLeft = 5
-                handler.removeCallbacks(tick)
-                handler.post(tick)
-                voiceLog("start ok source=$name sink=${events != null}")
-                result.success(null)
-                return
-            } catch (exc: Exception) {
-                last = exc
-                voiceLog("start failed source=$name ${exc.message}")
-                recorder = null
-                try {
-                    created?.release()
-                } catch (_: Exception) {
-                }
-                closeOutput()
-                abandonMicFocus()
-            }
+        val error = capture.start(path, inForeground())
+        if (error != null) {
+            result.error("record_failed", error, null)
+            return
         }
-        result.error(
-            "record_failed",
-            micFailureMessage(last ?: IllegalStateException("Die Aufnahme konnte nicht starten.")),
-            null,
-        )
-    }
-
-    private fun micFailureMessage(exc: Exception): String {
-        val raw = exc.message ?: ""
-        if (exc is SecurityException || raw.contains("permission", ignoreCase = true) || !micOpsAllowed()) {
-            return "Mikrofon blockiert. Nichts wurde gesendet."
-        }
-        return raw.ifBlank { "Die Aufnahme konnte nicht starten." }
-    }
-
-    private fun requestMicFocus() {
-        val audio = getSystemService(AudioManager::class.java) ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val request =
-                AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
-                    .setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                            .build(),
-                    )
-                    .build()
-            focusRequest = request
-            audio.requestAudioFocus(request)
-        }
-    }
-
-    private fun abandonMicFocus() {
-        val audio = getSystemService(AudioManager::class.java) ?: return
-        val request = focusRequest
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && request != null) {
-            audio.abandonAudioFocusRequest(request)
-        }
-        focusRequest = null
+        result.success(null)
     }
 
     private fun stopRecording(result: MethodChannel.Result) {
-        val current = recorder
-        if (current == null) {
+        if (!capture.active) {
             voiceLog("stop ignored, no active recorder")
             result.success(lastStop)
             return
         }
-        // Clear first so a second stop, from release-send and cancel together,
-        // cannot call MediaRecorder.stop again (invalid state 32 after -1007).
-        recorder = null
-        handler.removeCallbacks(tick)
-        val elapsed = System.currentTimeMillis() - startedAt
-        var stopError: String? = null
-        try {
-            current.stop()
-        } catch (exc: Exception) {
-            stopError = exc.message
-        }
-        try {
-            current.release()
-        } catch (exc: Exception) {
-            voiceLog("release failed ${exc.message}")
-        }
-        closeOutput()
-        abandonMicFocus()
-        val path = recordingPath
-        val bytes = if (path == null) 0L else java.io.File(path).length()
-        val decodedRms = if (path != null && bytes > 0L) fileRms(path) else false to 0.0
-        val payload =
-            mapOf(
-                "elapsedMs" to elapsed,
-                "bytes" to bytes,
-                "rms" to decodedRms.second,
-                "decoded" to decodedRms.first,
-            )
-        lastStop = payload
-        voiceLog(
-            "stop ${if (stopError == null) "ok" else "failed: $stopError"} elapsed=$elapsed bytes=$bytes rms=${decodedRms.second} decoded=${decodedRms.first}",
-        )
-        result.success(payload)
-    }
-
-    private fun fileRms(path: String): Pair<Boolean, Double> {
-        val extractor = MediaExtractor()
-        var codec: MediaCodec? = null
-        try {
-            extractor.setDataSource(path)
-            var track = -1
-            var format: MediaFormat? = null
-            for (index in 0 until extractor.trackCount) {
-                val candidate = extractor.getTrackFormat(index)
-                val mime = candidate.getString(MediaFormat.KEY_MIME) ?: continue
-                if (mime.startsWith("audio/")) {
-                    track = index
-                    format = candidate
-                    break
-                }
-            }
-            if (track < 0 || format == null) {
-                voiceLog("decode no audio track")
-                return false to 0.0
-            }
-            val mime = format.getString(MediaFormat.KEY_MIME) ?: return false to 0.0
-            extractor.selectTrack(track)
-            val decoder = MediaCodec.createDecoderByType(mime)
-            codec = decoder
-            decoder.configure(format, null, null, 0)
-            decoder.start()
-            val info = MediaCodec.BufferInfo()
-            var sum = 0.0
-            var count = 0L
-            var inputDone = false
-            var outputDone = false
-            val deadline = SystemClock.elapsedRealtime() + 4000
-            while (!outputDone && SystemClock.elapsedRealtime() < deadline) {
-                if (!inputDone) {
-                    val inIndex = decoder.dequeueInputBuffer(10_000)
-                    if (inIndex >= 0) {
-                        val buffer = decoder.getInputBuffer(inIndex)
-                        val size = if (buffer == null) -1 else extractor.readSampleData(buffer, 0)
-                        if (size < 0) {
-                            decoder.queueInputBuffer(
-                                inIndex,
-                                0,
-                                0,
-                                0,
-                                MediaCodec.BUFFER_FLAG_END_OF_STREAM,
-                            )
-                            inputDone = true
-                        } else {
-                            decoder.queueInputBuffer(inIndex, 0, size, extractor.sampleTime, 0)
-                            extractor.advance()
-                        }
-                    }
-                }
-                val outIndex = decoder.dequeueOutputBuffer(info, 10_000)
-                if (outIndex >= 0) {
-                    val out = decoder.getOutputBuffer(outIndex)
-                    if (out != null && info.size > 1) {
-                        out.order(ByteOrder.LITTLE_ENDIAN)
-                        out.position(info.offset)
-                        out.limit(info.offset + info.size)
-                        while (out.remaining() >= 2) {
-                            val sample = out.short.toDouble()
-                            sum += sample * sample
-                            count += 1
-                        }
-                    }
-                    decoder.releaseOutputBuffer(outIndex, false)
-                    if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outputDone = true
-                }
-            }
-            val rms = rmsFromSum(sum, count)
-            voiceLog("decode samples=$count rms=$rms")
-            if (count == 0L) return false to 0.0
-            return true to rms
-        } catch (exc: Exception) {
-            voiceLog("decode failed ${exc.message}")
-            return false to 0.0
-        } finally {
-            try {
-                codec?.stop()
-            } catch (_: Exception) {
-            }
-            try {
-                codec?.release()
-            } catch (_: Exception) {
-            }
-            extractor.release()
-        }
+        val stats = capture.stop()
+        lastStop = payload(stats)
+        result.success(lastStop)
     }
 
     private fun play(path: String?, speed: Double, result: MethodChannel.Result) {
@@ -541,30 +335,21 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun releaseRecorder() {
-        val current = recorder
-        recorder = null
-        handler.removeCallbacks(tick)
-        if (current != null) {
-            try {
-                current.stop()
-            } catch (exc: Exception) {
-                voiceLog("release stop failed ${exc.message}")
-            }
-            try {
-                current.release()
-            } catch (_: Exception) {
-            }
-        }
-        closeOutput()
-        abandonMicFocus()
+        if (capture.active) capture.stop()
     }
 
-    private fun closeOutput() {
-        try {
-            output?.close()
-        } catch (_: Exception) {
+    override fun onResume() {
+        super.onResume()
+        Log.i("HooBirdVoice", "onResume")
+    }
+
+    override fun onPause() {
+        Log.i("HooBirdVoice", "onPause")
+        if (capture.active) {
+            Log.w("HooBirdVoice", "pause while recording, releasing the mic")
+            capture.requestStop()
         }
-        output = null
+        super.onPause()
     }
 
     private fun saveJpeg(bytes: ByteArray?, result: MethodChannel.Result) {

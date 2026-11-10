@@ -14,12 +14,28 @@ class VoiceTake {
     required this.bytes,
     required this.rms,
     required this.decoded,
+    required this.maxAbs,
+    this.source = '',
+    this.sampleRate = 0,
+    this.pcmMaxAbs = 0,
+    this.pcmRms = 0,
+    this.fileMaxAbs = 0,
+    this.fileRms = 0,
+    this.fileDecoded = false,
   });
 
   final int elapsedMs;
   final int bytes;
   final double rms;
   final bool decoded;
+  final int maxAbs;
+  final String source;
+  final int sampleRate;
+  final int pcmMaxAbs;
+  final double pcmRms;
+  final int fileMaxAbs;
+  final double fileRms;
+  final bool fileDecoded;
 }
 
 /// Android microphone and playback. Other platforms have no recorder here.
@@ -34,7 +50,6 @@ class VoiceIo {
   static final _listeners = <void Function(Map<String, Object?>)>{};
   static StreamSubscription<dynamic>? _subscription;
   static Future<void>? _opening;
-  static var _uiLogsLeft = 5;
 
   static bool get supported => Platform.isAndroid;
 
@@ -58,15 +73,14 @@ class VoiceIo {
   @visibleForTesting
   static void debugReset() {
     _listeners.clear();
-    _uiLogsLeft = 5;
   }
 
   static void _dispatch(Object? event) {
     final parsed = parseEvent(event);
-    if (_uiLogsLeft > 0 && parsed['kind'] == 'recording') {
-      _uiLogsLeft -= 1;
-      unawaited(
-        log('event kind=${parsed['kind']} elapsed=${parsed['elapsedMs']} amp=${parsed['amplitude']}'),
+    if (parsed['kind'] == 'recording') {
+      // ignore: avoid_print
+      print(
+        'HooBirdVoice tick amp=${parsed['amplitude']} source=${parsed['source']} rate=${parsed['sampleRate']} max=${parsed['maxAbs']} rms=${parsed['rms']} elapsed=${parsed['elapsedMs']}',
       );
     }
     for (final listener in List<void Function(Map<String, Object?>)>.of(_listeners)) {
@@ -105,6 +119,8 @@ class VoiceIo {
   }
 
   static Future<void> log(String message) async {
+    // ignore: avoid_print
+    print('HooBirdVoice $message');
     if (!supported) return;
     try {
       await _methods.invokeMethod<void>('log', {'message': message});
@@ -122,28 +138,43 @@ class VoiceIo {
     return _methods.invokeMethod<void>('openSettings');
   }
 
+  static int _int(Object? value) => value is num ? value.toInt() : 0;
+
+  static double _double(Object? value) => value is num ? value.toDouble() : 0;
+
   static Future<void> start(String path) async {
+    await log('start requested');
     await ensureListening();
     await _methods.invokeMethod<void>('start', {'path': path});
+    await log('start returned');
   }
 
   static Future<VoiceTake> stop() async {
     final value = await _methods.invokeMethod<dynamic>('stop');
     if (value is Map) {
-      final bytes = value['bytes'];
-      final elapsed = value['elapsedMs'];
-      final rms = value['rms'];
-      return VoiceTake(
-        elapsedMs: elapsed is num ? elapsed.toInt() : 0,
-        bytes: bytes is num ? bytes.toInt() : 0,
-        rms: rms is num ? rms.toDouble() : 0,
+      final take = VoiceTake(
+        elapsedMs: _int(value['elapsedMs']),
+        bytes: _int(value['bytes']),
+        rms: _double(value['rms']),
         decoded: value['decoded'] == true,
+        maxAbs: _int(value['maxAbs']),
+        source: '${value['source'] ?? ''}',
+        sampleRate: _int(value['sampleRate']),
+        pcmMaxAbs: _int(value['pcmMaxAbs']),
+        pcmRms: _double(value['pcmRms']),
+        fileMaxAbs: _int(value['fileMaxAbs']),
+        fileRms: _double(value['fileRms']),
+        fileDecoded: value['fileDecoded'] == true,
       );
+      await log(
+        'stop source=${take.source} rate=${take.sampleRate} bytes=${take.bytes} elapsed=${take.elapsedMs} pcmMax=${take.pcmMaxAbs} pcmRms=${take.pcmRms} fileMax=${take.fileMaxAbs} fileRms=${take.fileRms} fileDecoded=${take.fileDecoded} gateMax=${take.maxAbs} gateRms=${take.rms} decoded=${take.decoded}',
+      );
+      return take;
     }
     if (value is int) {
-      return VoiceTake(elapsedMs: value, bytes: 0, rms: 0, decoded: false);
+      return VoiceTake(elapsedMs: value, bytes: 0, rms: 0, decoded: false, maxAbs: 0);
     }
-    return const VoiceTake(elapsedMs: 0, bytes: 0, rms: 0, decoded: false);
+    return const VoiceTake(elapsedMs: 0, bytes: 0, rms: 0, decoded: false, maxAbs: 0);
   }
 
   static Future<int> play(String path, double speed) async {

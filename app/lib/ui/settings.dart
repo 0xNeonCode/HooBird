@@ -10,6 +10,7 @@ import '../session.dart';
 import 'legal.dart';
 import 'link_qr.dart';
 import 'link_scan.dart';
+import 'mic_test.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key, required this.controller});
@@ -144,6 +145,15 @@ class _SettingsPageState extends State<SettingsPage> {
           Text(_notice ?? controller.error!),
         ],
         const SizedBox(height: 16),
+        TextButton(
+          onPressed: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const MicTestPage()),
+            );
+          },
+          child: const Text('Mikrofontest'),
+        ),
+        const SizedBox(height: 8),
         OutlinedButton(
           onPressed: () {
             Navigator.of(context).push(

@@ -4,7 +4,7 @@ Kurze Liste für ein physisches Xiaomi (arm64). Das ist ein Debug-Stand, kein St
 
 ## Welche App, welcher Server
 
-Die Datei für das Xiaomi heißt `hoobird-arm64-v8a-debug-testserver-5.apk`. Sie ist debug-signiert. Es ist kein Produktionsschlüssel und keine Store-Fassung. SHA-256 `11d44540afcbea664753d3ef23d40252e3f2f7c93cff90918f27272de2f4a273`, 58577066 Bytes. Dieselbe Zeile steht in `docs/android-v1-milestone.md` unter dem neunten Lauf. Die vorherige Testserver-Datei `hoobird-arm64-v8a-debug-testserver-4.apk` bleibt liegen, SHA-256 `0f1e7a895fc664daf6507fca8da52edfce4a21c4995e8c9305f29666cc3a7b01`. `hoobird-arm64-v8a-debug-testserver-3.apk` bleibt liegen, SHA-256 `0eaaf2a0115719f3a38bd1ec8f342bbf93fbbe4a852ee4441ab643a2031a769d`. `hoobird-arm64-v8a-debug-testserver-2.apk` bleibt liegen, SHA-256 `af4e8c6e715da2efe4718b26319d073ad8cfd15c05d073fb8a6cd572226f16da`. `hoobird-arm64-v8a-debug-testserver.apk` bleibt ebenfalls liegen, SHA-256 `a08b39779b488157f9cdbb0468c9e11d673a56280f142e66f6139ef654fc9812`. Die älteren Loopback-APKs bleiben die Dateien ohne `testserver` im Namen. Die sprechen weiter `127.0.0.1` an und erreichen das Telefon im WLAN nicht.
+Die Datei für das Xiaomi heißt `hoobird-arm64-v8a-debug-testserver-6.apk`. Sie ist debug-signiert. Es ist kein Produktionsschlüssel und keine Store-Fassung. SHA-256 `8c98d2c4abaa33abb22301592361ad86e4a0b387fe0ff2a5f9436c38a7836d2d`, 58605738 Bytes. Dieselbe Zeile steht in `docs/android-v1-milestone.md` unter dem zehnten Lauf. Die vorherige Testserver-Datei `hoobird-arm64-v8a-debug-testserver-5.apk` bleibt liegen, SHA-256 `11d44540afcbea664753d3ef23d40252e3f2f7c93cff90918f27272de2f4a273`. `hoobird-arm64-v8a-debug-testserver-4.apk` bleibt liegen, SHA-256 `0f1e7a895fc664daf6507fca8da52edfce4a21c4995e8c9305f29666cc3a7b01`. `hoobird-arm64-v8a-debug-testserver-3.apk` bleibt liegen, SHA-256 `0eaaf2a0115719f3a38bd1ec8f342bbf93fbbe4a852ee4441ab643a2031a769d`. `hoobird-arm64-v8a-debug-testserver-2.apk` bleibt liegen, SHA-256 `af4e8c6e715da2efe4718b26319d073ad8cfd15c05d073fb8a6cd572226f16da`. `hoobird-arm64-v8a-debug-testserver.apk` bleibt ebenfalls liegen, SHA-256 `a08b39779b488157f9cdbb0468c9e11d673a56280f142e66f6139ef654fc9812`. Die älteren Loopback-APKs bleiben die Dateien ohne `testserver` im Namen. Die sprechen weiter `127.0.0.1` an und erreichen das Telefon im WLAN nicht.
 
 Diese Testserver-APK ist zur Bauzeit festgelegt auf:
 
@@ -18,7 +18,7 @@ Konten stehen nicht in dieser Datei und nicht in der APK. Sie werden getrennt au
 ## Installieren
 
 1. Eine schon installierte HooBird-Debug-App deinstallieren.
-2. Unbekannte Quellen für die gewählte Datei-App erlauben, `hoobird-arm64-v8a-debug-testserver-5.apk` öffnen und installieren.
+2. Unbekannte Quellen für die gewählte Datei-App erlauben, `hoobird-arm64-v8a-debug-testserver-6.apk` öffnen und installieren.
 3. Startbild, Anmeldung mit dem getrennt erhaltenen Konto. Unter „Server anzeigen“ müssen die beiden HTTPS-Adressen oben stehen. Sie nicht auf `http://` oder `127.0.0.1` ändern.
 
 ## Wenn die Anmeldung den Server erreicht
@@ -42,14 +42,15 @@ Synthetische Konten, keine echten Personen. Die Konten kommen von außen, nicht 
 
 ## Morgen Abend: Sprache
 
-Die Aufnahme gilt als gesendet, wenn die Datei mindestens etwa eine Sekunde lang und mindestens 1 KB groß ist und der dekodierte Pegel nicht bei null liegt. Der Pegel in der Leiste entscheidet das nicht mehr. HyperOS hat `getMaxAmplitude` oft bei 0 gelassen, die Datei aber trotzdem geschrieben; die alte Fassung hat sie deshalb verworfen.
+Die Aufnahme liest das Mikrofon selbst (AudioRecord, PCM 16-bit, AAC über MediaCodec). Eine Datei aus lauter Nullen wird nicht gesendet, auch wenn sie lang und groß ist. Schlägt das Dekodieren fehl, wird ebenfalls nichts gesendet. Die Schwelle ist RMS 0,01, und der höchste Sample muss über 0 liegen, sowohl im gelesenen PCM als auch in der dekodierten Datei.
 
+0. Einstellungen, nach unten, „Mikrofontest“. Drei Sekunden sprechen. Die Leiste muss sich bewegen. Danach stehen Quelle, Abtastrate, Pegelspitze und RMS. „accept“ nur, wenn wirklich etwas zu hören ist. „Diagnose kopieren“ legt den Bericht in die Zwischenablage. Wiedergabe spielt die Datei ab. Nichts wird gesendet.
 1. Direktchat öffnen. Mikrofon beim ersten Mal erlauben. Eine schon erteilte Berechtigung muss reichen, auch wenn AppOps `foreground` meldet.
 2. Taste gedrückt halten, einen kurzen Satz sprechen, loslassen. Währenddessen: roter Punkt, die Zeit zählt, die Wellenform bewegt sich. Danach eine abspielbare Blase. Nichts davon darf mit „Mikrofon blockiert“ enden.
 3. Nochmal halten, nach oben schieben, loslassen. Die Aufnahme bleibt, Schloss ist zu. „Senden“ schickt sie. Der Papierkorb verwirft sie, dann kommt keine Blase.
 4. Nochmal halten, nach links wischen. Text „Wischen zum Abbrechen“. Es wird nichts gesendet.
 5. Ganz kurz antippen, unter einer Sekunde. Hinweis „Zu kurz“. Nichts wird gesendet.
-6. Optional am Rechner, während eine Aufnahme läuft: `adb logcat -s HooBirdVoice`. Erwartet: `onListen sink=true`, `start ok source=MIC sink=true` (oder `VOICE_RECOGNITION` / `VOICE_COMMUNICATION`, wenn MIC nicht startet), fünf Zeilen `tick` mit `sink=true`, `stop ok` mit `bytes` deutlich über 1024 und `rms` über 0.01, danach `ui take reason=accept`. Ein zweites `stop` in derselben Aufnahme darf nur `stop ignored` sein, nicht `invalid state`.
+6. Am Rechner, während eine Aufnahme läuft: `adb logcat -s HooBirdVoice:I HooBirdVoice:W`. Erwartet: `start requested foreground=true`, `audio focus result=1`, `probe source=...`, `source kept`, mehrere `tick amp=` mit Amplitude über 0, danach `decision` mit `fileDecoded=true`, `fileRms` über 0.01 und `send=true`, und `ui take reason=accept`. Dieselben Zeilen stehen auch unter `flutter`. Eine Aufnahme aus Nullen endet mit `send=false` und auf dem Bild mit „Mikrofon blockiert“. Ein zweites `stop` in derselben Aufnahme darf nur `stop ignored` sein.
 
 ## Morgen Abend: Lesebestätigungen mit dem Bot
 
@@ -67,7 +68,7 @@ Der Gegenpart ist ein matrix-bot-sdk-Bot. Die Eule zählt nur eine öffentliche 
 
 ## Bekannte Lücken
 
-- Der neunte Lauf hat einen Emulator (android-35, x86_64, KVM) und den lokalen Stack mit den Skripten aus dem Repo gefahren. Die Wellenform, die Gesten und „Mikrofon blockiert“ sind dort gesehen worden, siehe den neunten Lauf. Die Eule, das Info-Blatt und „Erneut senden“ wurden auf dem Emulator nicht angetippt. Ein Xiaomi wurde in diesem Lauf nicht angefasst.
+- Der zehnte Lauf hat die Aufnahme auf AudioRecord umgestellt. Auf dem Emulator hat ein 440-Hz-Ton `send=true` ergeben und `avd hostmicoff` `send=false`. Der Ranchu-HAL bricht den Ton nach wenigen hundert Millisekunden mit einem I/O-Fehler ab; der Anfang ist echt und liegt über der Schwelle. Gesten, Eule und QR sind in diesem Lauf nicht erneut angetippt worden. Ein Xiaomi wurde hier nicht angefasst. Der neunte Lauf bleibt der mit Wellenform, Gesten und lokalem Stack.
 - Der Live-Kamerascan hat auf dem Emulator das Vorschaubild und „Abtippen“ gezeigt. Ein ausgedruckter Code wurde von der laufenden Kamera nicht gelesen. Der Decoder ist mit einem selbst gezeichneten QR geprüft.
 - Keine Push-Zustellung. Der Schalter merkt sich nur die Sperrbildschirm-Sichtbarkeit des Android-Kanals. Ohne Bezahldienst bleiben zwei Wege: UnifiedPush mit einem Verteiler wie ntfy (kein Google-Konto, der Nutzer wählt den Verteiler) oder FCM (kein Entgelt für das übliche Kontingent, aber ein Google-Projekt und `google-services`). Beides ist nicht eingebaut.
 - Kein SAS, kein Identitäts-QR, kein Bluetooth.

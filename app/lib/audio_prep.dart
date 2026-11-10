@@ -94,24 +94,26 @@ const voiceMinimumMs = 1000;
 const voiceMinimumBytes = 1024;
 
 /// Full-scale RMS. Encoder noise of a muted mic stays under this. Speech does not.
-/// The UI peak is not used: HyperOS often reports amplitude 0 while the file has audio.
+/// The UI peak is not used. The gate reads the captured PCM and the decoded file.
 const voiceSilenceRms = 0.01;
 
+/// Fail closed. A file that did not decode, a peak of zero, or an RMS under
+/// [voiceSilenceRms] is not sent. HyperOS has delivered a valid AAC of digital
+/// zeros; length alone is not enough.
 String? voiceTakeRejection({
   required int byteLength,
   required int elapsedMs,
   required double rms,
   required bool decoded,
+  required int maxAbs,
 }) {
   if (elapsedMs < voiceMinimumMs) return 'too_short';
   if (byteLength < voiceMinimumBytes) return 'empty';
-  if (decoded && rms < voiceSilenceRms) return 'silent';
+  if (!decoded || maxAbs <= 0 || rms < voiceSilenceRms) return 'silent';
   return null;
 }
 
-/// A short hold is a slip. An empty or decoded-silent file is a blocked mic.
-/// A file that could not be decoded is sent when it is long enough, so a
-/// decoder failure does not swallow a real message.
+/// A short hold is a slip. An empty file, a failed decode, or silence is a blocked mic.
 String voiceTakeHint(String reason) {
   if (reason == 'too_short') return 'Zu kurz. Halte die Taste etwas länger.';
   return 'Mikrofon blockiert. Nichts wurde gesendet.';
