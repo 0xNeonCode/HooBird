@@ -17,7 +17,7 @@ Konten stehen nicht in dieser Datei und nicht in der APK. Sie werden getrennt au
 
 ## Installieren
 
-1. Eine schon installierte HooBird-Debug-App deinstallieren.
+1. Eine schon installierte HooBird-Debug-App deinstallieren. Fassung 7 ist mit dem Debug-Zertifikat dieser VM signiert, SHA-256 `5c905a33ee24f5f4ce64df2156439834f8670feaff27f57088b12c1b49a6c5b2`. Der nächste Test-Build nutzt den festen Testschlüssel aus `docs/test-signing.md`, Zertifikat SHA-256 `AA:5E:7B:EC:C0:7A:10:81:FE:31:7A:68:95:31:40:33:BC:D1:EC:89:6F:01:79:71:1B:DD:30:01:66:BB:44:9C`. Über Fassung 7 braucht es deshalb noch einmal ein Deinstallieren. Danach bleibt die Testdatenbank beim Update erhalten. Der Testschlüssel ist kein Release-Schlüssel.
 2. Unbekannte Quellen für die gewählte Datei-App erlauben, `hoobird-arm64-v8a-debug-testserver-7.apk` öffnen und installieren. Auf einem 32-bit-Telefon die armeabi-v7a-Datei.
 3. Startbild, Anmeldung mit dem getrennt erhaltenen Konto. Unter „Server anzeigen“ müssen die beiden HTTPS-Adressen oben stehen. Sie nicht auf `http://` oder `127.0.0.1` ändern.
 
