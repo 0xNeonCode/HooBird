@@ -10,6 +10,8 @@ import 'package:flutter_vodozemac/flutter_vodozemac.dart' as vod;
 import 'package:http/http.dart' as http;
 import 'package:matrix/encryption.dart';
 import 'package:matrix/matrix.dart';
+import 'package:hoobird/pickle_key.dart';
+import 'package:vodozemac/vodozemac.dart' as olm;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 const policyBase = 'http://127.0.0.1:18018';
@@ -84,11 +86,20 @@ void main() {
           username: 'kind$suffix',
           password: password,
           role: 'child',
-          deviceId: 'RECKIND01',
         );
         final childId = child['user_id'] as String;
+        final childName = child['username'] as String;
 
-        final first = await _login(root, 'kind1', childId, password, 'RECKIND01');
+        final first = await _loginChild(
+          root,
+          httpClient,
+          parentToken,
+          'kind1',
+          childName,
+          childId,
+          password,
+          'RECKIND01',
+        );
         clients.add(first);
         final recoveryKey = await first.initCryptoIdentity();
         expect(recoveryKey.length, greaterThan(20));
@@ -113,8 +124,16 @@ void main() {
         // online; that path is recorded as observed, not as this assertion.
         await _stop(first);
 
-        await _authorize(httpClient, parentToken, childId, 'RECKIND02');
-        final second = await _login(root, 'kind2', childId, password, 'RECKIND02');
+        final second = await _loginChild(
+          root,
+          httpClient,
+          parentToken,
+          'kind2',
+          childName,
+          childId,
+          password,
+          'RECKIND02',
+        );
         clients.add(second);
         final before = await second.getRoomById(roomId)!.getEventById(sentId);
         expect(before, isNotNull);
@@ -150,8 +169,16 @@ void main() {
         expect(reset.body.contains(recoveryKey), isFalse);
         password = resetPassword;
 
-        await _authorize(httpClient, parentToken, childId, 'RECKIND04');
-        final third = await _login(root, 'kind4', childId, password, 'RECKIND04');
+        final third = await _loginChild(
+          root,
+          httpClient,
+          parentToken,
+          'kind4',
+          childName,
+          childId,
+          password,
+          'RECKIND04',
+        );
         clients.add(third);
         final withoutKey = await third.getRoomById(roomId)!.getEventById(sentId);
         expect(withoutKey!.body.contains(marker), isFalse);
@@ -168,8 +195,16 @@ void main() {
         await _waitBackup(third);
         await _stop(third);
 
-        await _authorize(httpClient, parentToken, childId, 'RECKIND05');
-        final fourth = await _login(root, 'kind5', childId, password, 'RECKIND05');
+        final fourth = await _loginChild(
+          root,
+          httpClient,
+          parentToken,
+          'kind5',
+          childName,
+          childId,
+          password,
+          'RECKIND05',
+        );
         clients.add(fourth);
         await expectLater(fourth.restoreCryptoIdentity(recoveryKey), throwsA(anything));
         await fourth.restoreCryptoIdentity(replacement);
@@ -215,13 +250,25 @@ void _bindUia(Client client, String Function() password) {
   });
 }
 
-Future<Client> _login(
+Future<Client> _loginChild(
   Directory root,
+  http.Client httpClient,
+  String parentToken,
   String name,
+  String username,
   String userId,
   String password,
   String deviceId,
 ) async {
+  final account = olm.Account();
+  await _authorize(
+    httpClient,
+    parentToken,
+    userId,
+    deviceId,
+    account.identityKeys.ed25519.toBase64(),
+  );
+  final session = await _policyLogin(httpClient, username, password, deviceId);
   final database = await databaseFactory.openDatabase('${root.path}/$name.sqlite');
   final client = Client(
     name,
@@ -229,13 +276,16 @@ Future<Client> _login(
   );
   _bindUia(client, () => password);
   await client.checkHomeserver(Uri.parse(homeserver));
-  await client.login(
-    LoginType.mLoginPassword,
-    identifier: AuthenticationUserIdentifier(user: userId),
-    password: password,
-    deviceId: deviceId,
-    initialDeviceDisplayName: name,
+  await client.init(
+    newToken: session['access_token'] as String,
+    newUserID: userId,
+    newDeviceID: session['device_id'] as String? ?? deviceId,
+    newDeviceName: name,
+    newHomeserver: Uri.parse(homeserver),
+    newOlmAccount: account.toPickleEncrypted(pickleKeyOf(userId)),
   );
+  final uploaded = await client.encryption!.olmManager.uploadKeys(uploadDeviceKeys: true);
+  expect(uploaded, isTrue, reason: 'Geräteschlüssel müssen vor dem Sicherungsschlüssel auf dem Server sein');
   return client;
 }
 
@@ -244,11 +294,11 @@ Future<void> _stop(Client client) async {
   try {
     await client.abortSync();
   } catch (_) {}
+  // Give the sync that abortSync cannot cancel a moment to leave the
+  // database. logout closes it. dispose would close it again.
+  await Future<void>.delayed(const Duration(milliseconds: 200));
   try {
     await client.logout();
-  } catch (_) {}
-  try {
-    await client.dispose();
   } catch (_) {}
 }
 
@@ -319,6 +369,7 @@ Future<void> _authorize(
   String token,
   String childId,
   String deviceId,
+  String ed25519,
 ) async {
   final response = await httpClient.post(
     Uri.parse('$policyBase/_hoobird/v1/children/${Uri.encodeComponent(childId)}/devices'),
@@ -326,7 +377,7 @@ Future<void> _authorize(
       'authorization': 'Bearer $token',
       'content-type': 'application/json',
     },
-    body: '{"device_id":"$deviceId"}',
+    body: '{"device_id":"$deviceId","ed25519":"$ed25519"}',
   );
   expect(response.statusCode, 200, reason: response.body);
 }

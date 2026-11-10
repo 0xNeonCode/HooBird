@@ -5,6 +5,8 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import 'endpoints.dart';
+
 class PolicyException implements Exception {
   PolicyException(this.status, this.code, this.message);
 
@@ -17,9 +19,17 @@ class PolicyException implements Exception {
 }
 
 class PolicyApi {
-  PolicyApi(String baseUrl) : base = Uri.parse(baseUrl.replaceAll(RegExp(r'/+$'), ''));
+  PolicyApi(String baseUrl) : base = _checkedBase(baseUrl);
 
   final Uri base;
+
+  static Uri _checkedBase(String baseUrl) {
+    final problem = endpointRejection(baseUrl);
+    if (problem != null) {
+      throw PolicyException(0, 'endpoint_rejected', problem);
+    }
+    return Uri.parse(baseUrl.trim().replaceAll(RegExp(r'/+$'), ''));
+  }
 
   Future<Map<String, dynamic>> login(
     String username,
@@ -109,12 +119,13 @@ class PolicyApi {
     String token,
     String childId,
     String deviceId,
+    String ed25519,
   ) {
     return _send(
       'POST',
       '/_hoobird/v1/children/$childId/devices',
       token: token,
-      body: {'device_id': deviceId},
+      body: {'device_id': deviceId, 'ed25519': ed25519},
     );
   }
 
@@ -139,6 +150,42 @@ class PolicyApi {
     );
   }
 
+  Future<Map<String, dynamic>> redeemParent(String token, String childId, String code) {
+    return _send(
+      'POST',
+      '/_hoobird/v1/children/$childId/parents',
+      token: token,
+      body: {'code': code},
+    );
+  }
+
+  Future<Map<String, dynamic>> blockPerson(String token, String userId) {
+    return _send(
+      'POST',
+      '/_hoobird/v1/blocks',
+      token: token,
+      body: {'user_id': userId},
+    );
+  }
+
+  Future<Map<String, dynamic>> fileReport(
+    String token, {
+    required String roomId,
+    required String note,
+    required List<Map<String, dynamic>> items,
+  }) {
+    return _send(
+      'POST',
+      '/_hoobird/v1/reports',
+      token: token,
+      body: {
+        'room_id': roomId,
+        'note': note,
+        'items': items,
+      },
+    );
+  }
+
   Future<Map<String, dynamic>> _send(
     String method,
     String path, {
@@ -146,10 +193,7 @@ class PolicyApi {
     Map<String, String>? query,
     Map<String, dynamic>? body,
   }) async {
-    final uri = base.replace(
-      path: '${base.path}$path',
-      queryParameters: query,
-    );
+    final uri = policyRequestUri(base.toString(), path, query: query);
     final headers = <String, String>{'content-type': 'application/json'};
     if (token != null) {
       headers['authorization'] = 'Bearer $token';

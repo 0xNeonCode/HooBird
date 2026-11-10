@@ -4,8 +4,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../link_code.dart';
 import '../policy_api.dart';
 import '../session.dart';
+import 'legal.dart';
+import 'link_qr.dart';
+import 'link_scan.dart';
+import 'mic_test.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key, required this.controller});
@@ -19,6 +24,12 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   String? _notice;
   var _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.setHideNotificationContent(widget.controller.hideNotificationContent);
+  }
 
   Future<void> _run(Future<void> Function() action) async {
     setState(() {
@@ -55,7 +66,7 @@ class _SettingsPageState extends State<SettingsPage> {
         Text('Rolle $role · Gerät ${controller.client?.deviceID ?? controller.deviceId}'),
         const SizedBox(height: 8),
         const Text(
-          'Die Matrix-ID bleibt stehen, wenn sich der Nutzername ändert. Verschlüsselt ist nicht dasselbe wie identitätsverifiziert. Dieser Prototyp startet keine QR- oder Bluetooth-Prüfung.',
+          'Die Matrix-ID bleibt stehen, wenn sich der Nutzername ändert. Verschlüsselt ist nicht dasselbe wie identitätsverifiziert. Eine Identitätsprüfung per QR oder Bluetooth gibt es nicht. Ein Eltern-Code kann gescannt oder abgetippt werden. Der Scan beweist keine Sorgeberechtigung.',
         ),
         const SizedBox(height: 16),
         SegmentedButton<ThemeMode>(
@@ -66,6 +77,32 @@ class _SettingsPageState extends State<SettingsPage> {
           ],
           selected: {controller.themeMode},
           onSelectionChanged: (value) => controller.setTheme(value.first),
+        ),
+        const SizedBox(height: 12),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Tippen anzeigen und senden'),
+          subtitle: const Text('Andere sehen „schreibt…“, solange hier Text im Feld steht. Aus blendet auch deren Hinweis aus.'),
+          value: controller.sendTyping,
+          onChanged: (value) => controller.setSendTyping(value),
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Lesebestätigungen'),
+          subtitle: const Text(
+            'Aus ist die Voreinstellung. Dann geht keine öffentliche Quittung m.read raus, und der Lesestand anderer wird nicht gezeigt. Die Eule reagiert nur auf m.read, nicht auf m.read.private. Eine private Quittung für die eigenen Geräte bleibt.',
+          ),
+          value: controller.sendReceipts,
+          onChanged: (value) => controller.setSendReceipts(value),
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Inhalt auf dem Sperrbildschirm verbergen'),
+          subtitle: const Text(
+            'Voreinstellung an. Der Android-Kanal merkt sich das. Eine Push-Zustellung gibt es in dieser Fassung nicht, deshalb erscheint auch keine Vorschau. Bilder bleiben im Chat sichtbar, Speichern und Teilen sind dann aus.',
+          ),
+          value: controller.hideNotificationContent,
+          onChanged: (value) => controller.setHideNotificationContent(value),
         ),
         const SizedBox(height: 16),
         FilledButton(
@@ -100,7 +137,7 @@ class _SettingsPageState extends State<SettingsPage> {
         if (role == 'child') ...[
           const SizedBox(height: 20),
           const Text(
-            'Dieses Kinderkonto spricht nur mit freigegebenen Kontakten. Jedes weitere Gerät braucht eine Freigabe. Die Kennung bindet nicht den Geräteschlüssel.',
+            'Dieses Kinderkonto spricht nur mit freigegebenen Kontakten. Ein weiteres Gerät muss mit seiner ed25519-Kennung freigegeben werden. Die Gerätekennung allein reicht nicht. Ein Passwort-Zurücksetzen stellt die Chat-Schlüssel nicht wieder her.',
           ),
         ],
         if (_notice != null || controller.error != null) ...[
@@ -108,6 +145,24 @@ class _SettingsPageState extends State<SettingsPage> {
           Text(_notice ?? controller.error!),
         ],
         const SizedBox(height: 16),
+        TextButton(
+          onPressed: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const MicTestPage()),
+            );
+          },
+          child: const Text('Mikrofontest'),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton(
+          onPressed: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const LegalPage()),
+            );
+          },
+          child: const Text('Quelltext und Lizenzen'),
+        ),
+        const SizedBox(height: 8),
         OutlinedButton(
           onPressed: controller.busy ? null : controller.logout,
           child: const Text('Abmelden'),
@@ -129,14 +184,21 @@ class ParentPanel extends StatefulWidget {
 class _ParentPanelState extends State<ParentPanel> {
   final _username = TextEditingController();
   final _device = TextEditingController();
+  final _ed25519 = TextEditingController();
+  final _redeemChild = TextEditingController();
+  final _redeemCode = TextEditingController();
   String? _selectedChild;
   Map<String, dynamic>? _policy;
   String? _notice;
+  String? _linkPayload;
 
   @override
   void dispose() {
     _username.dispose();
     _device.dispose();
+    _ed25519.dispose();
+    _redeemChild.dispose();
+    _redeemCode.dispose();
     super.dispose();
   }
 
@@ -172,6 +234,46 @@ class _ParentPanelState extends State<ParentPanel> {
     throw PolicyException(404, 'not_found', 'Kein eindeutiger Nutzername.');
   }
 
+  Future<void> _redeem() async {
+    final token = widget.controller.accessToken;
+    if (token == null) return;
+    var childId = _redeemChild.text.trim();
+    var code = _redeemCode.text.trim();
+    final parsed = parseLinkPayload(code);
+    if (parsed != null) {
+      childId = parsed.childId;
+      code = parsed.code;
+    }
+    try {
+      await widget.controller.api.redeemParent(token, childId, code);
+      await widget.controller.refreshMe();
+      setState(() => _notice = 'Verknüpft. Das beweist keine Sorgeberechtigung.');
+      if (childId.isNotEmpty) await _load(childId);
+    } on PolicyException catch (exc) {
+      setState(() => _notice = exc.message);
+    }
+  }
+
+  Future<void> _scan() async {
+    final raw = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(builder: (_) => const LinkScanPage()),
+    );
+    if (!mounted || raw == null || raw.isEmpty) return;
+    final parsed = parseLinkPayload(raw);
+    if (parsed == null) {
+      setState(() {
+        _redeemCode.text = raw;
+        _notice = 'Der Scan ist kein Verknüpfungscode. Der Text kann abgetippt werden.';
+      });
+      return;
+    }
+    setState(() {
+      _redeemChild.text = parsed.childId;
+      _redeemCode.text = parsed.code;
+    });
+    await _redeem();
+  }
+
   Future<void> _act(Future<void> Function(String token, String childId) action) async {
     final token = widget.controller.accessToken;
     final childId = _selectedChild;
@@ -191,6 +293,24 @@ class _ParentPanelState extends State<ParentPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        const Text(
+          'Ein Elternteil zeigt den Code, das andere scannt ihn oder tippt ihn ab. Die Sperre eines Elternteils bleibt, bis genau dieses Elternteil sie aufhebt. Eine erneute Freigabe des anderen hebt sie nicht auf. Nachrichten und Schlüssel stehen hier nicht.',
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _redeemChild,
+          decoration: const InputDecoration(labelText: 'Matrix-ID des Kinderkontos'),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _redeemCode,
+          decoration: const InputDecoration(labelText: 'Verknüpfungscode oder dreizeiliger QR-Text'),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton(onPressed: _redeem, child: const Text('Code einlösen')),
+        const SizedBox(height: 8),
+        OutlinedButton(onPressed: _scan, child: const Text('Code scannen')),
+        const Text('Wenn die Kamera fehlt oder der Scan nichts erkennt, die beiden Felder ausfüllen.'),
         if (children.isEmpty) const Text('Keine verknüpften Kinderkonten.'),
         for (final child in children)
           ListTile(
@@ -257,12 +377,25 @@ class _ParentPanelState extends State<ParentPanel> {
             decoration: const InputDecoration(labelText: 'Gerätekennung freigeben'),
           ),
           const SizedBox(height: 8),
+          TextField(
+            controller: _ed25519,
+            decoration: const InputDecoration(
+              labelText: 'ed25519 des Kindergeräts',
+              helperText: 'Die Zeile, die das Kindergerät vor der Anmeldung anzeigt. Ein anderes Elternteil ersetzt eine schon gespeicherte Kennung nicht.',
+            ),
+          ),
+          const SizedBox(height: 8),
           Wrap(
             spacing: 8,
             children: [
               FilledButton(
                 onPressed: () => _act((token, childId) async {
-                  await widget.controller.api.authorizeDevice(token, childId, _device.text.trim());
+                  await widget.controller.api.authorizeDevice(
+                    token,
+                    childId,
+                    _device.text.trim(),
+                    _ed25519.text.trim(),
+                  );
                 }),
                 child: const Text('Gerät erlauben'),
               ),
@@ -276,14 +409,19 @@ class _ParentPanelState extends State<ParentPanel> {
                 onPressed: () => _act((token, childId) async {
                   final code = await widget.controller.api.linkCode(token, childId);
                   setState(() {
+                    _linkPayload = 'hoobird-link:v1\n$childId\n${code['code']}';
                     _notice =
-                        'Code ${code['code']}. Gilt ${code['ttl_seconds']} Sekunden. Beweist nicht: ${code['does_not_prove']}. QR ist nicht umgesetzt.';
+                        'Gilt ${code['ttl_seconds']} Sekunden. Beweist nicht: ${code['does_not_prove']}. Scannen oder abtippen.';
                   });
                 }),
-                child: const Text('Verknüpfungscode'),
+                child: const Text('Verknüpfungscode zeigen'),
               ),
             ],
           ),
+        ],
+        if (_linkPayload != null) ...[
+          const SizedBox(height: 12),
+          LinkQr(payload: _linkPayload!),
         ],
         if (_notice != null) ...[
           const SizedBox(height: 8),

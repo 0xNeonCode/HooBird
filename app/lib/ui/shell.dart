@@ -51,26 +51,98 @@ class _HomeShellState extends State<HomeShell> {
   }
 }
 
-class ChatList extends StatelessWidget {
+class ChatList extends StatefulWidget {
   const ChatList({super.key, required this.controller});
 
   final HoobirdController controller;
 
   @override
+  State<ChatList> createState() => _ChatListState();
+}
+
+class _ChatListState extends State<ChatList> {
+  final _query = TextEditingController();
+  String? _error;
+  var _showArchive = false;
+
+  @override
+  void dispose() {
+    _query.dispose();
+    super.dispose();
+  }
+
+  Future<void> _run(Future<void> Function() action) async {
+    try {
+      await action();
+      if (mounted) setState(() => _error = null);
+    } catch (exc) {
+      if (mounted) setState(() => _error = 'Die Raumaktion wurde abgelehnt: $exc');
+    }
+  }
+
+  Future<void> _roomActions(Room room) async {
+    final muted = room.pushRuleState == PushRuleState.dontNotify;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: Text(room.isFavourite ? 'Nicht mehr anheften' : 'Anheften'),
+              onTap: () {
+                Navigator.pop(context);
+                _run(() => room.setFavourite(!room.isFavourite));
+              },
+            ),
+            ListTile(
+              title: Text(room.isLowPriority ? 'Aus dem Archiv holen' : 'Archivieren'),
+              onTap: () {
+                Navigator.pop(context);
+                _run(() => room.setLowPriority(!room.isLowPriority));
+              },
+            ),
+            ListTile(
+              title: Text(muted ? 'Ton wieder an' : 'Stummschalten'),
+              subtitle: const Text('Gilt für Hinweise dieses Raums. Der Inhalt bleibt verschlüsselt.'),
+              onTap: () {
+                Navigator.pop(context);
+                _run(
+                  () => room.setPushRuleState(muted ? PushRuleState.notify : PushRuleState.dontNotify),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final client = controller.client;
+    final client = widget.controller.client;
     if (client == null) {
       return const Center(child: Text('Kein Matrix-Client.'));
     }
     return StreamBuilder(
       stream: client.onSync.stream,
       builder: (context, _) {
-        final rooms = client.rooms.where((room) => room.membership == Membership.join).toList()
-          ..sort((a, b) {
-            final left = a.lastEvent?.originServerTs ?? DateTime.fromMillisecondsSinceEpoch(0);
-            final right = b.lastEvent?.originServerTs ?? DateTime.fromMillisecondsSinceEpoch(0);
-            return right.compareTo(left);
-          });
+        final query = _query.text.trim().toLowerCase();
+        bool matches(Room room) =>
+            query.isEmpty || room.getLocalizedDisplayname().toLowerCase().contains(query);
+        final joined = client.rooms.where((room) => room.membership == Membership.join).toList();
+        int byRecent(Room a, Room b) {
+          if (a.isFavourite != b.isFavourite) return a.isFavourite ? -1 : 1;
+          final left = a.lastEvent?.originServerTs ?? DateTime.fromMillisecondsSinceEpoch(0);
+          final right = b.lastEvent?.originServerTs ?? DateTime.fromMillisecondsSinceEpoch(0);
+          return right.compareTo(left);
+        }
+
+        final active = joined.where((room) => !room.isLowPriority && matches(room)).toList()..sort(byRecent);
+        final archived = joined.where((room) => room.isLowPriority && matches(room)).toList()..sort(byRecent);
+        final archiveOpen = _showArchive && archived.isNotEmpty;
+        final visible = [...active, if (archiveOpen) ...archived];
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -87,8 +159,24 @@ class ChatList extends StatelessWidget {
                 ],
               ),
             ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: TextField(
+                controller: _query,
+                decoration: const InputDecoration(
+                  hintText: 'Chats durchsuchen',
+                  helperText: 'Sucht in den Namen der geladenen Räume, nicht im verschlüsselten Text.',
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+            ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              ),
             Expanded(
-              child: rooms.isEmpty
+              child: active.isEmpty && archived.isEmpty
                   ? const Padding(
                       padding: EdgeInsets.all(24),
                       child: Text(
@@ -97,25 +185,42 @@ class ChatList extends StatelessWidget {
                     )
                   : ListView.separated(
                       padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                      itemCount: rooms.length,
+                      itemCount: visible.length + 1,
                       separatorBuilder: (_, _) => const SizedBox(height: 8),
                       itemBuilder: (context, index) {
-                        final room = rooms[index];
+                        if (index == visible.length) {
+                          return TextButton(
+                            onPressed: archived.isEmpty ? null : () => setState(() => _showArchive = !_showArchive),
+                            child: Text(archiveOpen ? 'Archiv ausblenden' : 'Archiv (${archived.length})'),
+                          );
+                        }
+                        final room = visible[index];
+                        final muted = room.pushRuleState == PushRuleState.dontNotify;
                         return Card(
                           child: ListTile(
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
                             title: Text(room.getLocalizedDisplayname()),
                             subtitle: Text(_preview(room)),
-                            trailing: Icon(
-                              room.encrypted ? Icons.lock_outline : Icons.lock_open,
-                              color: room.encrypted
-                                  ? Theme.of(context).colorScheme.primary
-                                  : Theme.of(context).colorScheme.error,
+                            trailing: Wrap(
+                              spacing: 4,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                if (room.isFavourite) const Icon(Icons.push_pin_outlined, size: 18),
+                                if (room.isLowPriority) const Icon(Icons.archive_outlined, size: 18),
+                                if (muted) const Icon(Icons.notifications_off_outlined, size: 18),
+                                Icon(
+                                  room.encrypted ? Icons.lock_outline : Icons.lock_open,
+                                  color: room.encrypted
+                                      ? Theme.of(context).colorScheme.primary
+                                      : Theme.of(context).colorScheme.error,
+                                ),
+                              ],
                             ),
+                            onLongPress: () => _roomActions(room),
                             onTap: () {
                               Navigator.of(context).push(
                                 MaterialPageRoute<void>(
-                                  builder: (_) => ConversationPage(room: room),
+                                  builder: (_) => ConversationPage(room: room, controller: widget.controller),
                                 ),
                               );
                             },
@@ -131,6 +236,11 @@ class ChatList extends StatelessWidget {
   }
 }
 
+String _plainPreview(String body) {
+  final text = body.split('\n').where((line) => !line.startsWith('>')).join(' ').trim();
+  return text.isEmpty ? 'Nachricht' : text;
+}
+
 String _preview(Room room) {
   final event = room.lastEvent;
   if (event == null) return 'Noch keine Nachricht';
@@ -141,7 +251,7 @@ String _preview(Room room) {
     return switch (event.messageType) {
       MessageTypes.Image => 'Foto',
       MessageTypes.Audio => 'Sprachnachricht',
-      MessageTypes.Text || MessageTypes.Notice || MessageTypes.Emote => event.body,
+      MessageTypes.Text || MessageTypes.Notice || MessageTypes.Emote => _plainPreview(event.body),
       _ => 'Nachricht',
     };
   }

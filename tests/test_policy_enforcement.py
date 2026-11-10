@@ -120,6 +120,8 @@ def test_generic_client_dm_group_block_and_reapproval(stack):
     )
     assert code.status_code == 200, code.text
     assert code.json()["qr_implemented"] is False
+    assert code.json()["qr_display"] is True
+    assert code.json()["qr_camera_scan"] is False
     session_b = stack.login(parent_b["username"], parent_b["password"], "ELTERNDEV02")
     linked = stack.client.post(
         f"{POLICY}/_hoobird/v1/children/{quote(child['user_id'], safe='')}/parents",
@@ -289,12 +291,32 @@ def test_block_versus_invite_race_then_fail_closed(stack):
     for thread in threads:
         thread.join(timeout=20)
     assert results["block"].status_code == 200, results["block"].text
-    # The invite may win the race. Content after the block must still fail.
+    repair = stack.client.post(
+        f"{POLICY}/_hoobird/v1/children/{quote(child['user_id'], safe='')}/blocks/{quote(adult['user_id'], safe='')}/reconcile",
+        headers=stack.h(session_b["access_token"]),
+    )
+    assert repair.status_code == 200, repair.text
+    joined = stack.mx(
+        "GET",
+        f"/_synapse/admin/v1/users/{quote(adult['user_id'], safe='')}/joined_rooms",
+        stack.admin["access_token"],
+    )
+    assert joined.status_code == 200, joined.text
+    assert room_id not in joined.json().get("joined_rooms", [])
+    members = stack.mx(
+        "GET",
+        f"/_matrix/client/v3/rooms/{quote(room_id, safe='')}/members",
+        child_session["access_token"],
+    )
+    assert members.status_code == 200, members.text
+    for chunk in members.json().get("chunk", []):
+        if chunk.get("state_key") == adult["user_id"]:
+            assert chunk.get("content", {}).get("membership") not in ("join", "invite")
+    # The blocked contact is no longer invite or join in this child-created
+    # room. A message there is not a pair with that contact. A room where
+    # the child cannot kick still rejects content; that is the other test.
     later = stack.send_fake_encrypted(child_session["access_token"], room_id)
-    if results["invite"].status_code == 200:
-        assert later.status_code == 403, later.text
-    else:
-        assert results["invite"].status_code == 403
+    assert later.status_code == 200, later.text
     again = stack.invite(child_session["access_token"], room_id, adult["user_id"])
     assert again.status_code == 403
     reapproval = stack.client.post(
@@ -324,8 +346,55 @@ def test_child_devices_are_rejected_for_generic_clients(stack):
     ok = stack.raw_login(part, child["password"], "KINDGERAET01")
     assert ok.status_code == 200, ok.text
     token = ok.json()["access_token"]
-    upload = stack.mx("POST", "/_matrix/client/v3/keys/upload", token, {"device_keys": {}})
-    assert upload.status_code != 401
+    from tests.device_keys import DeviceKey
+
+    mismatched = DeviceKey("KINDGERAET01")
+    rejected = stack.mx(
+        "POST",
+        "/_matrix/client/v3/keys/upload",
+        token,
+        {"device_keys": mismatched.signed_device_keys(child["user_id"])},
+    )
+    assert rejected.status_code == 403, rejected.text
+    one_time = stack.mx(
+        "POST",
+        "/_matrix/client/v3/keys/upload",
+        token,
+        {"one_time_keys": {"signed_curve25519:AAAA": {"key": "abc", "signatures": {}}}},
+    )
+    assert one_time.status_code == 403, one_time.text
+    approved_key = DeviceKey("KINDGERAET01")
+    # The account was created with a random approved key that has no private
+    # half in this test. Replace that row by revoking and storing this key.
+    assert stack.client.delete(
+        f"{POLICY}/_hoobird/v1/children/{quote(child['user_id'], safe='')}/devices/KINDGERAET01",
+        headers=stack.h(session["access_token"]),
+    ).status_code == 200
+    stored = stack.client.post(
+        f"{POLICY}/_hoobird/v1/children/{quote(child['user_id'], safe='')}/devices",
+        json={"device_id": "KINDGERAET01", "ed25519": approved_key.ed25519},
+        headers=stack.h(session["access_token"]),
+    )
+    assert stored.status_code == 200, stored.text
+    assert stored.json()["binds_key_fingerprint"] is True
+    again_login = stack.raw_login(part, child["password"], "KINDGERAET01")
+    assert again_login.status_code == 200, again_login.text
+    token = again_login.json()["access_token"]
+    upload = stack.mx(
+        "POST",
+        "/_matrix/client/v3/keys/upload",
+        token,
+        {"device_keys": approved_key.signed_device_keys(child["user_id"])},
+    )
+    assert upload.status_code == 200, upload.text
+    swapped = DeviceKey("KINDGERAET01")
+    replay = stack.mx(
+        "POST",
+        "/_matrix/client/v3/keys/upload",
+        token,
+        {"device_keys": swapped.signed_device_keys(child["user_id"])},
+    )
+    assert replay.status_code == 403, replay.text
     revoked = stack.client.delete(
         f"{POLICY}/_hoobird/v1/children/{quote(child['user_id'], safe='')}/devices/KINDGERAET01",
         headers=stack.h(session["access_token"]),
@@ -347,13 +416,28 @@ def test_child_devices_are_rejected_for_generic_clients(stack):
         json={"code": code},
         headers=stack.h(other_session["access_token"]),
     ).status_code == 200
-    second = stack.client.post(
+    from tests.device_keys import random_ed25519
+
+    second_key = random_ed25519()
+    missing_key = stack.client.post(
         f"{POLICY}/_hoobird/v1/children/{quote(child['user_id'], safe='')}/devices",
         json={"device_id": "KINDGERAET02"},
         headers=stack.h(other_session["access_token"]),
     )
+    assert missing_key.status_code == 422 or missing_key.status_code == 400
+    second = stack.client.post(
+        f"{POLICY}/_hoobird/v1/children/{quote(child['user_id'], safe='')}/devices",
+        json={"device_id": "KINDGERAET02", "ed25519": second_key},
+        headers=stack.h(other_session["access_token"]),
+    )
     assert second.status_code == 200, second.text
-    assert second.json()["binds_key_fingerprint"] is False
+    assert second.json()["binds_key_fingerprint"] is True
+    conflict = stack.client.post(
+        f"{POLICY}/_hoobird/v1/children/{quote(child['user_id'], safe='')}/devices",
+        json={"device_id": "KINDGERAET02", "ed25519": random_ed25519()},
+        headers=stack.h(session["access_token"]),
+    )
+    assert conflict.status_code == 409, conflict.text
     assert stack.raw_login(part, child["password"], "KINDGERAET02").status_code == 200
 
 
@@ -448,3 +532,193 @@ def test_plaintext_media_is_rejected_and_room_policy_sticks(stack):
         },
     )
     assert threepid.status_code == 403, threepid.text
+
+
+def test_child_cross_signing_and_backups_stay_bound_to_the_approved_device(stack):
+    from tests.device_keys import CrossSigningKey, DeviceKey
+
+    parent = stack.create(stack.admin["access_token"], role="parent")
+    session = stack.login(parent["username"], parent["password"], "ELTERNDEV21")
+    device = DeviceKey("XSIGNDEV01")
+    child = stack.create(
+        session["access_token"],
+        role="child",
+        device_id="XSIGNDEV01",
+        ed25519=device.ed25519,
+    )
+    logged = stack.login(child["username"], child["password"], "XSIGNDEV01")
+    token = logged["access_token"]
+    user = child["user_id"]
+    uploaded = stack.mx(
+        "POST",
+        "/_matrix/client/v3/keys/upload",
+        token,
+        {"device_keys": device.signed_device_keys(user)},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    master = CrossSigningKey("master")
+    self_signing = CrossSigningKey("self_signing")
+    user_signing = CrossSigningKey("user_signing")
+    signing = stack.mx(
+        "POST",
+        "/_matrix/client/v3/keys/device_signing/upload",
+        token,
+        {
+            "master_key": master.body(user),
+            "self_signing_key": self_signing.signed_by(user, master),
+            "user_signing_key": user_signing.signed_by(user, master),
+        },
+    )
+    assert signing.status_code == 200, signing.text
+    device_document = self_signing.sign(device.signed_device_keys(user), user)
+    too_early = stack.mx(
+        "POST",
+        "/_matrix/client/v3/keys/signatures/upload",
+        token,
+        {user: {"XSIGNDEV01": device_document}},
+    )
+    assert too_early.status_code == 403, too_early.text
+    assert "master_not_bound" in too_early.text
+    stranger = DeviceKey("XSIGNDEV99")
+    foreign = stack.mx(
+        "POST",
+        "/_matrix/client/v3/keys/signatures/upload",
+        token,
+        {user: {"XSIGNDEV99": stranger.signed_device_keys(user)}},
+    )
+    assert foreign.status_code == 403, foreign.text
+    assert "signing_target_not_approved" in foreign.text
+    bound = stack.mx(
+        "POST",
+        "/_matrix/client/v3/keys/signatures/upload",
+        token,
+        {user: {master.public: device.sign(master.body(user), user), "XSIGNDEV01": device_document}},
+    )
+    assert bound.status_code == 200, bound.text
+    assert bound.json().get("failures") in ({}, None) or bound.json()["failures"] == {}
+    replacement = CrossSigningKey("master")
+    replaced = {
+        "master_key": replacement.body(user),
+        "self_signing_key": self_signing.signed_by(user, replacement),
+        "user_signing_key": user_signing.signed_by(user, replacement),
+    }
+    challenge = stack.mx("POST", "/_matrix/client/v3/keys/device_signing/upload", token, replaced)
+    assert challenge.status_code == 401, challenge.text
+    session_id = challenge.json()["session"]
+    confirmed = stack.mx(
+        "POST",
+        "/_matrix/client/v3/keys/device_signing/upload",
+        token,
+        {
+            **replaced,
+            "auth": {
+                "type": "m.login.password",
+                "session": session_id,
+                "identifier": {"type": "m.id.user", "user": user},
+                "password": child["password"],
+            },
+        },
+    )
+    assert confirmed.status_code == 403, confirmed.text
+    assert "master_replacement_unbound" in confirmed.text
+    marker = "hoobird-backup-marker"
+    backup = stack.mx(
+        "POST",
+        "/_matrix/client/v3/room_keys/version",
+        token,
+        {
+            "algorithm": "m.megolm_backup.v1.curve25519-aes-sha2",
+            "auth_data": {"public_key": marker, "signatures": {}},
+        },
+    )
+    assert backup.status_code == 200, backup.text
+    parent_backup = stack.mx("GET", "/_matrix/client/v3/room_keys/version", session["access_token"])
+    assert marker not in parent_backup.text
+    child_backup = stack.mx("GET", "/_matrix/client/v3/room_keys/version", token)
+    assert child_backup.status_code == 200, child_backup.text
+    assert marker in child_backup.text
+    impersonate = stack.mx(
+        "POST",
+        f"/_synapse/admin/v1/users/{quote(user, safe='')}/login",
+        session["access_token"],
+        {},
+    )
+    assert impersonate.status_code in (401, 403), impersonate.text
+    dehydrated = stack.mx(
+        "PUT",
+        "/_matrix/client/unstable/org.matrix.msc3814.v1/dehydrated_device",
+        token,
+        {"device_id": "DEHYDRATED01", "device_data": {"algorithm": "org.matrix.msc2697.v1.dehydration.v1.olm"}},
+    )
+    assert dehydrated.status_code != 200, dehydrated.text
+    reset_password = secrets.token_urlsafe(18)
+    reset = stack.client.post(
+        f"{POLICY}/_hoobird/v1/accounts/{quote(user, safe='')}/reset-password",
+        json={"new_password": reset_password},
+        headers=stack.h(session["access_token"]),
+    )
+    assert reset.status_code == 200, reset.text
+    assert marker not in reset.text
+    assert reset.json()["recovery_key_returned"] is False
+    assert reset.json()["message_keys_returned"] is False
+    parent_again = stack.mx("GET", "/_matrix/client/v3/room_keys/version", session["access_token"])
+    assert marker not in parent_again.text
+    adult = stack.create(stack.admin["access_token"], role="adult")
+    adult_session = stack.login(adult["username"], adult["password"], "ADULTXSIGN01")
+    adult_master = CrossSigningKey("master")
+    adult_upload = stack.mx(
+        "POST",
+        "/_matrix/client/v3/keys/device_signing/upload",
+        adult_session["access_token"],
+        {"master_key": adult_master.body(adult["user_id"])},
+    )
+    assert adult_upload.status_code == 200, adult_upload.text
+
+
+def test_personal_block_and_explicit_report_do_not_expose_text(stack):
+    left = stack.create(stack.admin["access_token"], role="adult")
+    right = stack.create(stack.admin["access_token"], role="adult")
+    parent = stack.create(stack.admin["access_token"], role="parent")
+    left_session = stack.login(left["username"], left["password"], "BLOCKLEFT01")
+    right_session = stack.login(right["username"], right["password"], "BLOCKRIGHT1")
+    parent_session = stack.login(parent["username"], parent["password"], "BLOCKPARENT")
+    room = stack.create_room(left_session["access_token"], [right["user_id"]])
+    assert room.status_code == 200, room.text
+    room_id = room.json()["room_id"]
+    blocked = stack.client.post(
+        f"{POLICY}/_hoobird/v1/blocks",
+        json={"user_id": right["user_id"]},
+        headers=stack.h(left_session["access_token"]),
+    )
+    assert blocked.status_code == 200, blocked.text
+    assert blocked.json()["messages_included"] is False
+    denied_send = stack.send_fake_encrypted(left_session["access_token"], room_id)
+    assert denied_send.status_code == 403, denied_send.text
+    fresh = stack.create_room(right_session["access_token"], [left["user_id"]])
+    assert fresh.status_code == 403, fresh.text
+    secret = "nur-wenn-angehakt"
+    filed = stack.client.post(
+        f"{POLICY}/_hoobird/v1/reports",
+        json={
+            "room_id": room_id,
+            "note": "Hinweis ohne Text",
+            "items": [
+                {"event_id": "$shown", "disclose": True, "body": secret},
+                {"event_id": "$hidden", "disclose": False, "body": "nicht-mitschicken"},
+            ],
+        },
+        headers=stack.h(left_session["access_token"]),
+    )
+    assert filed.status_code == 200, filed.text
+    payload = filed.json()
+    assert payload["disclosed_count"] == 1
+    assert payload["bodies_echoed"] is False
+    assert payload["visible_to_parents"] is False
+    assert secret not in filed.text
+    assert "nicht-mitschicken" not in filed.text
+    parent_read = stack.client.get(
+        f"{POLICY}/_hoobird/v1/reports/{payload['report_id']}",
+        headers=stack.h(parent_session["access_token"]),
+    )
+    assert parent_read.status_code == 404
+    assert secret not in parent_read.text

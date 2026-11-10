@@ -108,6 +108,61 @@ class SynapseAdmin:
         if response.status_code != 200:
             raise MatrixCallError(response.status_code, response.text)
 
+    def joined_rooms(self, user_id: str) -> list[str]:
+        response = self._admin(
+            "GET",
+            f"/_synapse/admin/v1/users/{quote(user_id, safe='')}/joined_rooms",
+        )
+        if response.status_code != 200:
+            raise MatrixCallError(response.status_code, response.text)
+        return list(response.json().get("joined_rooms") or [])
+
+    def kick_from_room(self, room_id: str, user_id: str) -> None:
+        response = self._admin(
+            "POST",
+            f"/_synapse/admin/v1/rooms/{quote(room_id, safe='')}/kick",
+            {"user_id": user_id, "reason": "HooBird block"},
+        )
+        if response.status_code not in (200, 400, 403, 404):
+            raise MatrixCallError(response.status_code, response.text)
+
+    def reconcile_block(self, child_user_id: str, contact_user_id: str) -> dict:
+        """Ask the homeserver module to remove a blocked contact.
+
+        Retries so an invite that won the race by a few hundred milliseconds
+        is kicked after the block is visible. This is not one database
+        transaction with Synapse. Content checks still fail closed immediately.
+        The module kicks as the child, so a room where the child has no power
+        stays. The admin token only authorises the request. It does not join
+        the room.
+        """
+
+        kicked: set[str] = set()
+        errors = 0
+        for _ in range(4):
+            try:
+                rooms = self.joined_rooms(child_user_id)
+            except MatrixCallError:
+                errors += 1
+                rooms = []
+            response = self.http.post(
+                f"{self.base_url}/_hoobird/internal/reconcile",
+                headers={"Authorization": f"Bearer {self._token}"},
+                json={
+                    "child_user_id": child_user_id,
+                    "contact_user_id": contact_user_id,
+                    "room_ids": rooms,
+                },
+            )
+            if response.status_code == 200:
+                for room_id in response.json().get("kicked_rooms") or []:
+                    kicked.add(room_id)
+            else:
+                errors += 1
+                logger.info("reconcile status %s", response.status_code)
+            time.sleep(0.2)
+        return {"kicked_rooms": sorted(kicked), "errors": errors}
+
     def delete_device(self, user_id: str, device_id: str) -> None:
         response = self._admin(
             "DELETE",

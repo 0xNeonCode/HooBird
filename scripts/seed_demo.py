@@ -39,6 +39,8 @@ SPECS = {
     "fremder": {"role": "adult", "device": "FREMDDEMO1"},
     "jonas": {"role": "child", "device": "JONASDEMO01"},
 }
+# Not a phone Olm key. The seed script does not upload device keys for Jonas.
+JONAS_PLACEHOLDER_ED25519 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 ACCOUNTS: dict[str, dict[str, str]] = {}
 
 
@@ -183,6 +185,7 @@ def main() -> None:
                     "password": jonas_spec["password"],
                     "role": "child",
                     "device_id": jonas_spec["device"],
+                    "ed25519": JONAS_PLACEHOLDER_ED25519,
                 },
             )
             created.raise_for_status()

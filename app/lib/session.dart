@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_vodozemac/flutter_vodozemac.dart' as vod;
 import 'package:matrix/encryption.dart';
 import 'package:matrix/matrix.dart';
@@ -12,11 +13,26 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:vodozemac/vodozemac.dart' as olm;
 
+import 'endpoints.dart';
+import 'pickle_key.dart';
 import 'policy_api.dart';
 
-const defaultPolicyUrl = 'http://127.0.0.1:18018';
-const defaultHomeserver = 'http://127.0.0.1:18008';
+/// A binary built for a non-loopback server drops a saved session that still
+/// points at another address. It does not call that old server.
+Future<void> dropStoredSessionWhenBuildServerDiffers(SharedPreferences prefs) async {
+  if (!buildEndpointsPinned) return;
+  final stored = prefs.getString('homeserver');
+  await prefs.setString('homeserver', buildHomeserver);
+  await prefs.setString('policy_url', buildPolicyUrl);
+  if (stored == null || stored == buildHomeserver) return;
+  final directory = await getApplicationSupportDirectory();
+  for (final name in ['hoobird.sqlite', 'hoobird.sqlite-wal', 'hoobird.sqlite-shm']) {
+    final file = File(p.join(directory.path, name));
+    if (file.existsSync()) file.deleteSync();
+  }
+}
 
 Future<void> prepareDesktopDatabase() async {
   if (Platform.isLinux || Platform.isWindows) {
@@ -42,8 +58,11 @@ class HoobirdController extends ChangeNotifier {
   }) {
     themeMode = _readTheme(prefs.getString('theme'));
     deviceId = prefs.getString('device_id') ?? _newDeviceId();
-    policyUrl = prefs.getString('policy_url') ?? defaultPolicyUrl;
-    homeserver = prefs.getString('homeserver') ?? defaultHomeserver;
+    policyUrl = resolvedEndpoint(prefs.getString('policy_url'), buildPolicyUrl);
+    homeserver = resolvedEndpoint(prefs.getString('homeserver'), buildHomeserver);
+    sendTyping = prefs.getBool('send_typing') ?? true;
+    sendReceipts = prefs.getBool('send_receipts') ?? false;
+    hideNotificationContent = prefs.getBool('hide_notification_content') ?? true;
   }
 
   final SharedPreferences prefs;
@@ -53,10 +72,16 @@ class HoobirdController extends ChangeNotifier {
   late String deviceId;
   late String policyUrl;
   late String homeserver;
+  late bool sendTyping;
+  late bool sendReceipts;
+  late bool hideNotificationContent;
   bool busy = false;
   String? error;
   Map<String, dynamic>? me;
   String? recoveryKeyShownOnce;
+  String? deviceEd25519;
+  String fingerprintStatus = 'Fingerabdruck wird vorbereitet.';
+  Future<olm.Account?>? _accountFuture;
 
   bool get loggedIn => client?.isLogged() ?? false;
 
@@ -75,6 +100,10 @@ class HoobirdController extends ChangeNotifier {
     error = null;
     notifyListeners();
     try {
+      final rejected = endpointRejection(policyUrl) ?? endpointRejection(homeserver);
+      if (rejected != null) {
+        throw PolicyException(0, 'endpoint_rejected', rejected);
+      }
       await prefs.setString('device_id', deviceId);
       await prefs.setString('policy_url', policyUrl);
       await prefs.setString('homeserver', homeserver);
@@ -86,17 +115,35 @@ class HoobirdController extends ChangeNotifier {
         throw PolicyException(500, 'bad_login', 'Die Anmeldung lieferte keine Sitzung.');
       }
       final server = Uri.parse(homeserver);
-      if (matrix.homeserver == null) {
+      final current = matrix.homeserver;
+      if (current == null || !sameEndpoint(current.toString(), homeserver)) {
         await matrix.checkHomeserver(server);
       }
       if (!matrix.isLogged()) {
+        final account = await localAccount();
+        if (account == null) {
+          throw PolicyException(
+            0,
+            'fingerprint_unavailable',
+            'Der Geräteschlüssel ist nicht bereit. Die Anmeldung wurde abgebrochen, damit kein anderer Schlüssel hochgeladen wird.',
+          );
+        }
         await matrix.init(
           newToken: token,
           newUserID: userId,
           newDeviceID: returnedDevice,
           newDeviceName: 'HooBird',
           newHomeserver: server,
+          newOlmAccount: account.toPickleEncrypted(pickleKeyOf(userId)),
         );
+        final uploaded = await matrix.encryption?.olmManager.uploadKeys(uploadDeviceKeys: true);
+        if (uploaded != true) {
+          throw PolicyException(
+            0,
+            'device_keys_rejected',
+            'Die Geräteschlüssel wurden nicht angenommen. Die Anmeldung bleibt ohne diese Schlüssel.',
+          );
+        }
       }
       deviceId = returnedDevice;
       me = await api.me(token);
@@ -126,11 +173,18 @@ class HoobirdController extends ChangeNotifier {
   Future<void> logout() async {
     busy = true;
     notifyListeners();
+    final matrix = client;
     try {
-      await client?.logout();
-    } catch (_) {
-      await client?.clear();
-    }
+      if (matrix != null) {
+        matrix.backgroundSync = false;
+        try {
+          await matrix.abortSync();
+        } catch (_) {}
+        // logout already closes the database. A second dispose races with
+        // that close and the SDK logs database_closed.
+        await matrix.logout();
+      }
+    } catch (_) {}
     me = null;
     recoveryKeyShownOnce = null;
     busy = false;
@@ -161,6 +215,32 @@ class HoobirdController extends ChangeNotifier {
     }
   }
 
+  Future<void> setSendTyping(bool value) async {
+    sendTyping = value;
+    await prefs.setBool('send_typing', value);
+    notifyListeners();
+  }
+
+  Future<void> setSendReceipts(bool value) async {
+    sendReceipts = value;
+    await prefs.setBool('send_receipts', value);
+    notifyListeners();
+  }
+
+  Future<void> setHideNotificationContent(bool value) async {
+    hideNotificationContent = value;
+    await prefs.setBool('hide_notification_content', value);
+    if (Platform.isAndroid) {
+      const channel = MethodChannel('dev.hoobird.spike.hoobird/notify');
+      try {
+        await channel.invokeMethod<void>('lockscreen', {'hideContent': value});
+      } on PlatformException {
+        // The preference is still stored. Push delivery is not built.
+      }
+    }
+    notifyListeners();
+  }
+
   Future<void> setTheme(ThemeMode mode) async {
     themeMode = mode;
     await prefs.setString('theme', switch (mode) {
@@ -169,6 +249,47 @@ class HoobirdController extends ChangeNotifier {
       ThemeMode.system => 'system',
     });
     notifyListeners();
+  }
+
+  Future<void> prepareFingerprint() async {
+    await localAccount();
+    notifyListeners();
+  }
+
+  Future<olm.Account?> localAccount() {
+    return _accountFuture ??= _loadAccount();
+  }
+
+  Future<olm.Account?> _loadAccount() async {
+    try {
+      await initVodozemac();
+      var secret = prefs.getString('pending_olm_secret');
+      if (secret == null || secret.length < 16) {
+        final random = Random.secure();
+        secret = List.generate(32, (_) => String.fromCharCode(33 + random.nextInt(90))).join();
+        await prefs.setString('pending_olm_secret', secret);
+      }
+      final stored = prefs.getString('pending_olm_pickle');
+      final account = stored == null
+          ? olm.Account()
+          : olm.Account.fromPickleEncrypted(
+              pickle: stored,
+              pickleKey: pickleKeyOf(secret),
+            );
+      if (stored == null) {
+        await prefs.setString(
+          'pending_olm_pickle',
+          account.toPickleEncrypted(pickleKeyOf(secret)),
+        );
+      }
+      deviceEd25519 = account.identityKeys.ed25519.toBase64();
+      fingerprintStatus = deviceEd25519!;
+      return account;
+    } catch (_) {
+      deviceEd25519 = null;
+      fingerprintStatus = 'Fingerabdruck noch nicht verfügbar';
+      return null;
+    }
   }
 
   void setDeviceId(String value) {
@@ -199,6 +320,7 @@ class HoobirdController extends ChangeNotifier {
 }
 
 Future<void> initVodozemac() async {
+  if (olm.isInitialized()) return;
   if (Platform.isLinux) {
     final executableDir = File(Platform.resolvedExecutable).parent.path;
     final candidates = [

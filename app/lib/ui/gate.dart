@@ -29,6 +29,7 @@ class _GatePageState extends State<GatePage> {
     _device.text = widget.controller.deviceId;
     _policy.text = widget.controller.policyUrl;
     _server.text = widget.controller.homeserver;
+    widget.controller.prepareFingerprint();
   }
 
   @override
@@ -95,8 +96,13 @@ class _GatePageState extends State<GatePage> {
               decoration: const InputDecoration(
                 labelText: 'Gerätekennung',
                 helperText:
-                    'Bei einem Kinderkonto muss ein Elternteil genau diese Kennung freigeben. Sie ist keine Schlüsselfingerabdruck-Bindung.',
+                    'Bei einem Kinderkonto muss ein Elternteil diese Kennung und die ed25519-Zeile darunter freigeben, bevor die Anmeldung Schlüssel hochlädt.',
               ),
+            ),
+            const SizedBox(height: 12),
+            SelectableText(
+              'ed25519: ${controller.fingerprintStatus}',
+              semanticsLabel: 'ed25519-Kennung dieses Geräts',
             ),
             const SizedBox(height: 8),
             Align(
@@ -109,12 +115,18 @@ class _GatePageState extends State<GatePage> {
             if (_showEndpoints) ...[
               TextField(
                 controller: _policy,
-                decoration: const InputDecoration(labelText: 'Policy-Adresse'),
+                decoration: const InputDecoration(
+                  labelText: 'Policy-Adresse',
+                  helperText: 'HTTPS. Klartext nur für 127.0.0.1 und localhost.',
+                ),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: _server,
-                decoration: const InputDecoration(labelText: 'Homeserver'),
+                decoration: const InputDecoration(
+                  labelText: 'Homeserver',
+                  helperText: 'HTTPS. Klartext nur für 127.0.0.1 und localhost.',
+                ),
               ),
             ],
             const SizedBox(height: 16),
@@ -139,7 +151,7 @@ class _GatePageState extends State<GatePage> {
             ),
             const SizedBox(height: 16),
             Text(
-              'Die E-Mail-Adresse ist optional und wird hier nicht abgefragt. Sie bestätigt nur ein Postfach, nicht Alter oder Identität. QR- und Bluetooth-Abgleich sind in diesem Meilenstein nicht umgesetzt.',
+              'Die E-Mail-Adresse ist optional und wird hier nicht abgefragt. Sie bestätigt nur ein Postfach, nicht Alter oder Identität. Elterncodes können in den Einstellungen gescannt oder abgetippt werden. Bluetooth-Abgleich ist in diesem Meilenstein nicht umgesetzt.',
               style: TextStyle(color: scheme.onSurfaceVariant, height: 1.35),
             ),
           ],

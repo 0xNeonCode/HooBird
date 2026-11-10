@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS device_authorizations (
     child_user_id TEXT NOT NULL REFERENCES accounts(user_id),
     device_id TEXT NOT NULL,
     authorized_by TEXT NOT NULL REFERENCES accounts(user_id),
+    ed25519 TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (child_user_id, device_id)
 );
@@ -66,6 +67,27 @@ CREATE TABLE IF NOT EXISTS link_codes (
     created_by TEXT NOT NULL REFERENCES accounts(user_id),
     expires_at TIMESTAMPTZ NOT NULL,
     consumed_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS personal_blocks (
+    blocker_user_id TEXT NOT NULL REFERENCES accounts(user_id),
+    blocked_user_id TEXT NOT NULL REFERENCES accounts(user_id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (blocker_user_id, blocked_user_id)
+);
+
+CREATE TABLE IF NOT EXISTS reports (
+    id BIGSERIAL PRIMARY KEY,
+    reporter_user_id TEXT NOT NULL REFERENCES accounts(user_id),
+    room_id TEXT NOT NULL,
+    note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS report_items (
+    report_id BIGINT NOT NULL REFERENCES reports(id),
+    event_id TEXT NOT NULL,
+    body TEXT
 );
 """
 
@@ -93,6 +115,9 @@ class PolicyStore:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(SCHEMA)
+                cur.execute(
+                    "ALTER TABLE device_authorizations ADD COLUMN IF NOT EXISTS ed25519 TEXT"
+                )
 
     def get_account(self, user_id: str) -> dict | None:
         with self._connect() as conn:
@@ -448,17 +473,50 @@ class PolicyStore:
                     for row in cur.fetchall()
                 ]
 
-    def authorize_device(self, child_user_id: str, device_id: str, authorized_by: str) -> None:
+    def authorize_device(
+        self, child_user_id: str, device_id: str, authorized_by: str, ed25519: str
+    ) -> str:
+        """Store a parent-approved ed25519 key. Does not replace a different key."""
+
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO device_authorizations (child_user_id, device_id, authorized_by)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT DO NOTHING
+                    INSERT INTO device_authorizations
+                        (child_user_id, device_id, authorized_by, ed25519)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (child_user_id, device_id) DO NOTHING
                     """,
-                    (child_user_id, device_id, authorized_by),
+                    (child_user_id, device_id, authorized_by, ed25519),
                 )
+                if cur.rowcount:
+                    return "created"
+                cur.execute(
+                    """
+                    SELECT ed25519 FROM device_authorizations
+                    WHERE child_user_id = %s AND device_id = %s
+                    """,
+                    (child_user_id, device_id),
+                )
+                row = cur.fetchone()
+        if row and row[0] == ed25519:
+            return "same"
+        if row and not row[0]:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE device_authorizations
+                        SET ed25519 = %s
+                        WHERE child_user_id = %s AND device_id = %s
+                          AND (ed25519 IS NULL OR ed25519 = '')
+                        """,
+                        (ed25519, child_user_id, device_id),
+                    )
+                    if cur.rowcount:
+                        return "created"
+            return "conflict"
+        return "conflict"
 
     def revoke_device(self, child_user_id: str, device_id: str) -> bool:
         with self._connect() as conn:
@@ -479,23 +537,44 @@ class PolicyStore:
                     """
                     SELECT 1 FROM device_authorizations
                     WHERE child_user_id = %s AND device_id = %s
+                      AND ed25519 IS NOT NULL AND ed25519 <> ''
                     """,
                     (child_user_id, device_id),
                 )
                 return cur.fetchone() is not None
+
+    def device_ed25519(self, child_user_id: str, device_id: str) -> str | None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT ed25519 FROM device_authorizations
+                    WHERE child_user_id = %s AND device_id = %s
+                    """,
+                    (child_user_id, device_id),
+                )
+                row = cur.fetchone()
+        if not row or not row[0]:
+            return None
+        return row[0]
 
     def list_devices(self, child_user_id: str) -> list[dict]:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT device_id, authorized_by FROM device_authorizations
+                    SELECT device_id, authorized_by, ed25519 FROM device_authorizations
                     WHERE child_user_id = %s ORDER BY device_id
                     """,
                     (child_user_id,),
                 )
                 return [
-                    {"device_id": row[0], "authorized_by": row[1]}
+                    {
+                        "device_id": row[0],
+                        "authorized_by": row[1],
+                        "ed25519": row[2],
+                        "binds_key_fingerprint": bool(row[2]),
+                    }
                     for row in cur.fetchall()
                 ]
 
@@ -511,6 +590,15 @@ class PolicyStore:
                     (unique,),
                 )
                 view.roles = {row[0]: row[1] for row in cur.fetchall()}
+                cur.execute(
+                    """
+                    SELECT blocker_user_id, blocked_user_id
+                    FROM personal_blocks
+                    WHERE blocker_user_id = ANY(%s) AND blocked_user_id = ANY(%s)
+                    """,
+                    (unique, unique),
+                )
+                view.personal_blocks = {(row[0], row[1]) for row in cur.fetchall()}
                 children = [user_id for user_id, role in view.roles.items() if role == "child"]
                 if not children:
                     return view
@@ -544,6 +632,64 @@ class PolicyStore:
                 for child_id, contact_id, blocked_by in cur.fetchall():
                     view.blocks.setdefault((child_id, contact_id), set()).add(blocked_by)
         return view
+
+    def add_personal_block(self, blocker: str, blocked: str) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO personal_blocks (blocker_user_id, blocked_user_id)
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (blocker, blocked),
+                )
+
+    def remove_personal_block(self, blocker: str, blocked: str) -> bool:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM personal_blocks
+                    WHERE blocker_user_id = %s AND blocked_user_id = %s
+                    """,
+                    (blocker, blocked),
+                )
+                return cur.rowcount > 0
+
+    def list_personal_blocks(self, blocker: str) -> list[str]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT blocked_user_id FROM personal_blocks
+                    WHERE blocker_user_id = %s ORDER BY blocked_user_id
+                    """,
+                    (blocker,),
+                )
+                return [row[0] for row in cur.fetchall()]
+
+    def save_report(self, reporter: str, room_id: str, note: str | None, items: list[dict]) -> int:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO reports (reporter_user_id, room_id, note)
+                    VALUES (%s, %s, %s)
+                    RETURNING id
+                    """,
+                    (reporter, room_id, note),
+                )
+                report_id = cur.fetchone()[0]
+                for item in items:
+                    cur.execute(
+                        """
+                        INSERT INTO report_items (report_id, event_id, body)
+                        VALUES (%s, %s, %s)
+                        """,
+                        (report_id, item["event_id"], item["body"]),
+                    )
+                return int(report_id)
 
     def role_of(self, user_id: str) -> str | None:
         account = self.get_account(user_id)

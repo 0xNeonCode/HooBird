@@ -40,7 +40,7 @@ Vorhandene Spam-Checker-Callbacks, die das Modul registriert: `check_event_for_s
 
 Zusätzlich, weil der Spam-Checker den Raumzustand nicht mitliefert: Third-Party-Rules `check_event_allowed` und `on_create_room`. `check_event_allowed` ist in Synapse als experimentell gekennzeichnet. Der Prototyp benutzt es trotzdem, weil nur dort der aktuelle Zustand ankommt. `on_create_room` erzwingt nicht-föderiert, privat, Megolm, Einladung, Historie `joined`, kein Gastzugang.
 
-Nicht vorhanden und deshalb nicht gehookt: ein Modul-Callback für `/keys/upload`, `/keys/device_signing/upload` und `/keys/signatures/upload`. Nach dem Widerruf löscht der Policy-Dienst das Synapse-Gerät. Das alte Token stirbt. Ein neues Login mit derselben freigegebenen Kennung ist wieder möglich. Die Kennung ist kein Fingerabdruck.
+Nicht vorhanden: ein Modul-Callback für `/keys/upload`, `/keys/device_signing/upload` und `/keys/signatures/upload`. Der laufende Meilenstein umwickelt deshalb die Handler-Methoden in diesem Synapse-Prozess und lehnt die Kinderanmeldung ab, wenn die Umwicklung nicht sitzt. Das ist an Synapse 1.163 gemessen, nicht an einem anderen Homeserver. Nach dem Widerruf löscht der Policy-Dienst das Synapse-Gerät. Das alte Token stirbt. Ein neues Login mit derselben freigegebenen Kennung ist wieder möglich. Die Kennung ist kein Fingerabdruck.
 
 Föderation ist serverseitig aus: kein Federation-Listener, `federation_domain_whitelist: []`, `should_drop_federated_event` liefert wahr, Räume werden auf `m.federate: false` gezwungen, `trusted_key_servers: []`. Der Test ruft die Federation-Version und einen Join nach `#matrix:matrix.org` auf.
 
@@ -68,7 +68,7 @@ cd app && flutter test test/recovery_live_test.dart
 | Dart-SDK: ohne lebendes Gerät kein Klartext; falscher Sicherungsschlüssel scheitert; richtiger stellt den Text wieder her; Passwort-Reset gibt den Schlüssel nicht zurück und der neue Login liest ohne Schlüssel nichts; nach `initCryptoIdentity` verbindet der alte Schlüssel nicht mehr, der neue liest alte und neue Nachricht, weil das drehende Gerät die lokale Sitzung neu hochlädt | Flutter-Test gegen den lokalen Server, `test/recovery_live_test.dart` | bestanden, etwa 2 s Laufzeit nach aufgebautem Native-Code |
 | Linux-Client gegen den Seed-Raum | manuell unter Xvfb, kein Emulator | die Oberfläche zeigte den Raum „Familie“, die Zeile „Verschlüsselt · Identität nicht verifiziert“, fremde Ereignisse als „Schlüssel auf diesem Gerät nicht vorhanden“ und die eigene gesendete Zeile im Klartext. `event_json` enthielt diese Zeile 0-mal |
 | Physisches Android, APK, Emulator | — | nicht ausgeführt. `flutter doctor` findet kein Android-SDK |
-| QR, SAS, Bluetooth, Push, Antworten, Reaktionen, Suche, Anheften, Meldungsfluss | — | nicht gebaut |
+| QR, SAS, Bluetooth, Push, Antworten, Reaktionen, Suche, Anheften, Meldungsfluss | — | in dieser frühen Tabelle nicht gebaut. Der spätere Android-Stand steht in `docs/android-v1-milestone.md`. |
 | To-Device-Weitergabe, solange das erste Gerät online bleibt | beobachtet, nicht als stabiler Test festgehalten | ein früher Lauf zeigte den Klartext auf dem zweiten Gerät ohne `restoreCryptoIdentity`. Ein späterer Lauf hat das nicht als stabile Erwartung wiederholt. Der automatisierte Test stoppt das erste Gerät, bevor das zweite kommt |
 
 Der letzte vollständige `pytest`-Lauf endete mit 26 bestandenen Tests in 55,52 s. Das Protokoll liegt in `docs/evidence/pytest.txt`. Ein grüner Lauf ist keine Aussage über ungetestete Pfade.

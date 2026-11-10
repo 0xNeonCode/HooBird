@@ -24,8 +24,10 @@ from hoobird_rules import (
     can_add_parent,
     can_lift_block,
     contact_allowed,
+    disclosed_report_items,
     fold_username,
     valid_device_id,
+    valid_ed25519,
     valid_username,
 )
 
@@ -47,6 +49,7 @@ class CreateAccountBody(BaseModel):
     role: str
     email: str | None = None
     device_id: str | None = None
+    ed25519: str | None = None
 
 
 class UsernameBody(BaseModel):
@@ -79,6 +82,23 @@ class ContactBody(BaseModel):
 
 class DeviceBody(BaseModel):
     device_id: str
+    ed25519: str
+
+
+class PersonalBlockBody(BaseModel):
+    user_id: str
+
+
+class ReportItemBody(BaseModel):
+    event_id: str
+    disclose: bool = False
+    body: str | None = None
+
+
+class ReportBody(BaseModel):
+    room_id: str
+    note: str | None = None
+    items: list[ReportItemBody] = Field(default_factory=list)
 
 
 def _settings() -> dict:
@@ -257,6 +277,12 @@ def create_account(body: CreateAccountBody, request: Request):
             _fail(400, "bad_email", "Die E-Mail-Adresse ist ungültig.")
     if body.device_id and not valid_device_id(body.device_id):
         _fail(400, "bad_device", "Die Gerätekennung ist ungültig.")
+    if body.role == "child" and body.device_id and not valid_ed25519(body.ed25519 or ""):
+        _fail(
+            400,
+            "fingerprint_required",
+            "Ein Kindergerät braucht die ed25519-Kennung, die das Gerät anzeigt.",
+        )
     localpart = None
     user_id = None
     for _ in range(3):
@@ -285,7 +311,7 @@ def create_account(body: CreateAccountBody, request: Request):
     if body.role == "child":
         store.link_parent(user_id, actor["user_id"])
         if body.device_id:
-            store.authorize_device(user_id, body.device_id, actor["user_id"])
+            store.authorize_device(user_id, body.device_id, actor["user_id"], body.ed25519 or "")
     dev_token = None
     if email:
         import secrets
@@ -446,6 +472,8 @@ def create_link_code(child_id: str, body: LinkCodeBody, request: Request):
         "proves": "short_lived_shared_secret",
         "does_not_prove": ["guardianship", "proximity", "age"],
         "qr_implemented": False,
+        "qr_display": True,
+        "qr_camera_scan": False,
     }
 
 
@@ -512,11 +540,23 @@ def block_contact(child_id: str, body: ContactBody, request: Request):
     if store.is_linked_parent(child_id, contact["user_id"]):
         _fail(400, "cannot_block_parent", "Ein verknüpftes Elternkonto kann hier nicht blockiert werden.")
     store.add_block(child_id, contact["user_id"], actor["user_id"])
+    repair = admin_of(request).reconcile_block(child_id, contact["user_id"])
     return {
         "blocked_by": sorted(store.blocks_for(child_id, contact["user_id"])),
         "effective": False,
         "reapproval_does_not_lift": True,
+        "reconcile": repair,
     }
+
+
+@app.post("/_hoobird/v1/children/{child_id}/blocks/{contact_user_id}/reconcile")
+def reconcile_block(child_id: str, contact_user_id: str, request: Request):
+    actor = caller(request)
+    store = store_of(request)
+    _require_linked_parent(store, actor, child_id)
+    if not store.blocks_for(child_id, contact_user_id):
+        _fail(404, "block_missing", "Keine Sperre für diesen Kontakt.")
+    return admin_of(request).reconcile_block(child_id, contact_user_id)
 
 
 @app.delete("/_hoobird/v1/children/{child_id}/blocks/{contact_user_id}")
@@ -544,12 +584,21 @@ def authorize_device(child_id: str, body: DeviceBody, request: Request):
     _require_linked_parent(store, actor, child_id)
     if not valid_device_id(body.device_id):
         _fail(400, "bad_device", "Die Gerätekennung ist ungültig.")
-    store.authorize_device(child_id, body.device_id, actor["user_id"])
+    if not valid_ed25519(body.ed25519):
+        _fail(400, "fingerprint_required", "Die ed25519-Kennung des Geräts fehlt oder ist ungültig.")
+    outcome = store.authorize_device(child_id, body.device_id, actor["user_id"], body.ed25519)
+    if outcome == "conflict":
+        _fail(
+            409,
+            "fingerprint_conflict",
+            "Für diese Gerätekennung ist schon ein anderer Schlüssel gespeichert. Ein anderes Elternteil ersetzt ihn nicht.",
+        )
     return {
         "device_id": body.device_id,
         "authorized": True,
-        "binds_key_fingerprint": False,
+        "binds_key_fingerprint": True,
         "one_parent_sufficient": True,
+        "stored": outcome,
     }
 
 
@@ -585,6 +634,67 @@ def _facts(store: PolicyStore, child_id: str, contact_user_id: str) -> ContactFa
         blocked_by=frozenset(store.blocks_for(child_id, contact_user_id)),
         approved_by=approvals.get(contact_user_id),
     )
+
+
+@app.post("/_hoobird/v1/blocks")
+def block_person(body: PersonalBlockBody, request: Request):
+    actor = caller(request)
+    store = store_of(request)
+    target = store.get_account(body.user_id)
+    if target is None or target["user_id"] == actor["user_id"]:
+        _fail(404, "not_found", "Dieses Konto kann nicht blockiert werden.")
+    store.add_personal_block(actor["user_id"], target["user_id"])
+    return {
+        "blocked_user_id": target["user_id"],
+        "messages_included": False,
+        "enforced_on": "membership_and_encrypted_send",
+    }
+
+
+@app.delete("/_hoobird/v1/blocks/{user_id}")
+def unblock_person(user_id: str, request: Request):
+    actor = caller(request)
+    removed = store_of(request).remove_personal_block(actor["user_id"], user_id)
+    if not removed:
+        _fail(404, "not_blocked", "Diese Sperre ist nicht gespeichert.")
+    return {"blocked_user_id": user_id, "removed": True}
+
+
+@app.get("/_hoobird/v1/blocks")
+def list_blocks(request: Request):
+    actor = caller(request)
+    return {
+        "blocked_user_ids": store_of(request).list_personal_blocks(actor["user_id"]),
+        "messages_included": False,
+    }
+
+
+@app.post("/_hoobird/v1/reports")
+def file_report(body: ReportBody, request: Request):
+    actor = caller(request)
+    room_id = body.room_id.strip()
+    if not room_id.startswith("!") or len(room_id) > 255 or "\x00" in room_id:
+        _fail(400, "bad_room", "Die Raumkennung ist ungültig.")
+    note = None
+    if body.note is not None:
+        note = body.note.strip()
+        if len(note) > 500 or "\x00" in note:
+            _fail(400, "bad_note", "Der Hinweis ist zu lang.")
+        if not note:
+            note = None
+    items = disclosed_report_items([item.model_dump() for item in body.items])
+    if not items and note is None:
+        _fail(400, "empty_report", "Die Meldung enthält weder ein Ereignis noch einen Hinweis.")
+    report_id = store_of(request).save_report(actor["user_id"], room_id, note, items)
+    disclosed = sum(1 for item in items if item["body"] is not None)
+    return {
+        "report_id": report_id,
+        "event_count": len(items),
+        "disclosed_count": disclosed,
+        "bodies_echoed": False,
+        "visible_to_parents": False,
+        "server_did_not_fetch_events": True,
+    }
 
 
 def _policy_body(store: PolicyStore, child: dict) -> dict:

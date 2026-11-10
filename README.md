@@ -1,6 +1,6 @@
 # HooBird
 
-**Experimenteller Prototyp. Nicht für echte Personen. Nicht Android-bereit. Nicht sicherheitsgeprüft.**
+**Experimenteller Prototyp. Nicht für echte Personen. Nicht sicherheitsgeprüft. Ein Debug-APK ist kein Store-Release.**
 
 HooBird ist ein Arbeitstitel für einen Familien-Messenger auf Matrix. Der Name ist keine geprüfte und keine eingetragene Marke. Das Veröffentlichen dieses Quelltexts räumt keine Rechte an Namen, Eule oder Anwendungszeichen ein. Eine andere Person darf den Code unter der AGPL benutzen und muss dafür einen eigenen Namen wählen, wenn sie ihn anbietet.
 
@@ -16,10 +16,9 @@ Er ist kein Produkt, keine Beta und keine Einladung, Kinder oder andere Personen
 
 Diese Lücken sind Teil des Prototyps. Sie stehen auch in `SECURITY.md`.
 
-- Ein generischer Matrix-Client spricht Synapse direkt an. Die App erzwingt die Richtlinie nicht.
-- Die Gerätebindung eines Kinderkontos prüft eine `device_id`-Zeichenkette, keinen Schlüssel-Fingerabdruck.
-- Für `/keys/upload` und die Cross-Signing-Uploads gibt es keinen Modul-Callback. Der Widerruf löscht das Gerät.
-- Gruppen-Wettlauf: Sperre und Einladung sind keine gemeinsame Transaktion. Die Mitgliedschaft kann kurz falsch bleiben. Inhalt danach soll fehlschlagen. Ein automatischer Rauswurf ist nicht gebaut.
+- Ein generischer Matrix-Client spricht Synapse direkt an. Die App erzwingt die Richtlinie nicht. Der Server muss es tun.
+- Eine Kinder-Gerätefreigabe speichert die ed25519-Kennung des Geräts. Die Anmeldung verlangt diese Zeile. Der Homeserver-Prozess weist `/keys/upload` zurück, wenn die Signatur nicht dazu passt. Cross-Signing und `/keys/signatures/upload` laufen über dieselbe Umwicklung: ein Master-Schlüssel bestätigt ein Gerät erst, nachdem ein freigegebenes Gerät ihn signiert hat. Fehlt die Umwicklung, wird die Kinderanmeldung abgelehnt. Der Widerruf löscht das Synapse-Gerät.
+- Gruppen-Wettlauf: Sperre und Einladung sind keine gemeinsame Transaktion. Nach der Sperre versucht der Dienst, den gesperrten Kontakt aus den schon betretenen Räumen des Kindes zu entfernen. Das Fenster bleibt. Inhalt soll fehlschlagen, sobald die Sperre sichtbar ist. Das Kind wird nicht automatisch entfernt.
 - Späteres Mitglied: ein danach freigegebenes Mitglied wird eingeladen und sieht frühere Ereignisse nicht. Ein unerlaubtes späteres Mitglied wird abgelehnt.
 - Die Medienprüfung sieht den Dateianfang. Die Megolm-Form ist keine kryptografische Prüfung.
 
@@ -29,7 +28,7 @@ Eigener Code: AGPL-3.0-or-later. Der Lizenztext ist `LICENSE`. Die weitergebbare
 
 Synapse 1.163.0 ist im Image `AGPL-3.0-or-later OR LicenseRef-Element-Commercial`. Dieser Entwurf nutzt die AGPL-Seite. Eine kommerzielle Element-Lizenz liegt nicht vor. Element X ist nicht eingebaut. `matrix-rust-sdk` ist nicht eingebunden.
 
-Wer den Policy-Dienst oder Synapse mit diesem Modul anderen Personen über ein Netz anbietet, hat zusätzlich die Quelltextpflicht aus Abschnitt 13 der AGPL. Dieser Prototyp bietet dafür keinen Link in der Oberfläche an, weil er nicht für einen solchen Betrieb gedacht ist.
+Wer den Policy-Dienst oder Synapse mit diesem Modul anderen Personen über ein Netz anbietet, hat zusätzlich die Quelltextpflicht aus Abschnitt 13 der AGPL. Die App zeigt Quelle und diesen Hinweis unter Einstellungen, „Quelltext und Lizenzen“. Das ist kein Betrieb für andere Personen und kein Ersatz für eine rechtliche Prüfung.
 
 ## Lokal starten
 
@@ -62,7 +61,7 @@ flutter test test/recovery_live_test.dart
 ./build/linux/x64/release/bundle/hoobird
 ```
 
-Ein Android-APK wurde nicht erzeugt. Auf der Prüfungsmaschine ist kein Android-SDK installiert.
+Ein Debug-APK entsteht mit `flutter build apk --debug`. Es ist testsigniert, trägt keine Produktions-Signatur und ist kein Store-Release. Umfang und offene Punkte stehen in `docs/android-v1-milestone.md`.
 
 `scripts/seed_demo.py` legt erfundene Konten nur in der lokalen Datenbank an. Die Passwörter erzeugt das Skript oder liest sie aus der gitignored Datei `runtime/demo-accounts.json`. Sie stehen nicht im Quelltext.
 
@@ -75,11 +74,12 @@ Ein Android-APK wurde nicht erzeugt. Auf der Prüfungsmaschine ist kein Android-
 - [docs/confirmed-product-spec.md](docs/confirmed-product-spec.md) — entschieden, angenommen, offen
 - [docs/feasibility.md](docs/feasibility.md) — SDKs, Tests, Grenzen
 - [docs/local-handoff.md](docs/local-handoff.md) — Versionen und Befehle
-- [docs/bericht.md](docs/bericht.md) — was beim Meilenstein wirklich lief
+- [docs/bericht.md](docs/bericht.md) — was beim ersten Meilenstein wirklich lief
+- [docs/android-v1-milestone.md](docs/android-v1-milestone.md) — Android-Meilenstein, getestet und offen
 - [docs/veroeffentlichungsvorbereitung.md](docs/veroeffentlichungsvorbereitung.md) — Stand der Open-Source-Vorbereitung
 
 ## Veröffentlichung
 
 Dieses öffentliche Repository ist der bereinigte Quellbaum auf https://github.com/0xNeonCode/HooBird. Die private Historie des Entwurfs ist nicht enthalten. Sie wurde nicht geholt, nicht gespiegelt, nicht zusammengeführt und nicht veröffentlicht. Die lokalen Fixture-Werte des ersten Meilensteins stehen in diesem Repository nicht. Die private Historie wurde nicht umgeschrieben.
 
-Der Stand bleibt ein experimenteller Prototyp. Er ist nicht für echte Personen, nicht Android-bereit und nicht sicherheitsgeprüft. Frühere Prüfläufe stehen in `docs/veroeffentlichungsvorbereitung.md` und `docs/evidence/`. Dieser Commit wiederholt sie nicht.
+Die Veröffentlichung selbst bleibt ein experimenteller Prototyp und ist nicht sicherheitsgeprüft. Ein späterer Commit kann ein testsigniertes Debug-APK bauen. Das ist kein Store-Release und keine Freigabe für echte Personen. Frühere Prüfläufe stehen in `docs/veroeffentlichungsvorbereitung.md` und `docs/evidence/`. Die Veröffentlichung wiederholt sie nicht. Frische Läufe des Android-Meilensteins stehen in `docs/android-v1-milestone.md`.

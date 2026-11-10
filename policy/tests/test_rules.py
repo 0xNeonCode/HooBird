@@ -12,9 +12,11 @@ from hoobird_rules import (
     fold_username,
     media_looks_like_plaintext,
     members_from_create_body,
+    disclosed_report_items,
     membership_allowed,
     state_event_allowed,
     valid_device_id,
+    valid_ed25519,
     valid_username,
 )
 
@@ -175,9 +177,64 @@ def test_username_device_and_parent_limit():
     assert valid_username("a" * 33) is False
     assert valid_device_id("LINUSPHONE1") is True
     assert valid_device_id("../x") is False
+    assert valid_ed25519("A" * 43) is True
+    assert valid_ed25519("A" * 10) is False
+    assert valid_ed25519("not a key") is False
     assert can_add_parent(0) is True
     assert can_add_parent(1) is True
     assert can_add_parent(2) is False
+
+
+def test_child_group_needs_every_other_member_approved():
+    view = _view()
+    view.approvals[(CHILD, ADULT)] = PARENT
+    current = {ADULT: "join", STRANGER: "join"}
+    allowed, reason = membership_allowed(
+        view, current, state_key=CHILD, content={"membership": "join"}
+    )
+    assert allowed is False
+    assert reason.startswith("unapproved_pair")
+    view.approvals[(CHILD, STRANGER)] = PARENT
+    allowed, reason = membership_allowed(
+        view, current, state_key=CHILD, content={"membership": "join"}
+    )
+    assert allowed is True
+    assert reason == "safe_membership"
+
+
+def test_personal_block_rejects_a_shared_room():
+    view = _view()
+    view.personal_blocks.add((ADULT, STRANGER))
+    allowed, reason = membership_allowed(
+        view, {ADULT: "join"}, state_key=STRANGER, content={"membership": "invite"}
+    )
+    assert allowed is False
+    assert reason.startswith("personal_block")
+    send, send_reason = content_event_allowed(
+        view,
+        {ADULT: "join", STRANGER: "join"},
+        event_type="m.room.encrypted",
+        content=_enc(),
+    )
+    assert send is False
+    assert send_reason.startswith("personal_block")
+
+
+def test_report_keeps_only_explicitly_disclosed_text():
+    items = disclosed_report_items(
+        [
+            {"event_id": "$yes", "disclose": True, "body": "sichtbar"},
+            {"event_id": "$no", "disclose": False, "body": "geheim"},
+            {"event_id": "$missing", "body": "auch geheim"},
+            {"event_id": "", "disclose": True, "body": "leer"},
+            "kein objekt",
+        ]
+    )
+    assert items == [
+        {"event_id": "$yes", "body": "sichtbar"},
+        {"event_id": "$no", "body": None},
+        {"event_id": "$missing", "body": None},
+    ]
 
 
 def test_media_magic_heuristic():
